@@ -5,6 +5,8 @@ import { MapNode } from './components/MapNode.jsx'
 import { Edge } from './components/Edge.jsx'
 import { BottomSheet } from './components/BottomSheet.jsx'
 import { NoteModal } from './components/NoteModal.jsx'
+import { EditTextModal } from './components/EditTextModal.jsx'
+import { ConnectBanner } from './components/ConnectMode.jsx'
 import { ApiKeyBadge, ApiKeyModal } from './components/ApiKeyModal.jsx'
 import { callClaude, hasApiKey } from './api.js'
 import { BUSINESS_THEME, PHILOSOPHY_THEME, INITIAL_NODES, INITIAL_EDGES } from './themes.js'
@@ -15,8 +17,7 @@ const newId = () => `n${++_id}`
 function ToolbarBtn({ onClick, theme, title, children }) {
   const [hov, setHov] = useState(false)
   return (
-    <motion.button
-      onClick={onClick} title={title}
+    <motion.button onClick={onClick} title={title}
       whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.94 }}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
@@ -27,9 +28,7 @@ function ToolbarBtn({ onClick, theme, title, children }) {
         cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
         transition: 'all 0.15s', fontFamily: 'monospace', fontSize: 11,
       }}
-    >
-      {children}
-    </motion.button>
+    >{children}</motion.button>
   )
 }
 
@@ -42,9 +41,13 @@ export default function App() {
   const [vp, setVp] = useState({ x: 0, y: 0, scale: 1 })
   const [showKeyModal, setShowKeyModal] = useState(false)
   const [noteTarget, setNoteTarget] = useState(null)
+  const [editTextTarget, setEditTextTarget] = useState(null)
+  const [connectFrom, setConnectFrom] = useState(null)
   const [provokeLoading, setProvokeLoading] = useState(false)
+  const [dualLoading, setDualLoading] = useState(false)
   const [, forceUpdate] = useState(0)
   const canvasRef = useRef(null)
+  const svgRef = useRef(null)
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 })
 
   const theme = mode === 'business' ? BUSINESS_THEME : PHILOSOPHY_THEME
@@ -55,6 +58,7 @@ export default function App() {
   const onCanvasDown = (e) => {
     const el = e.target
     if (!el.dataset.bg && el !== canvasRef.current) return
+    if (connectFrom) { setConnectFrom(null); return }
     setSelected(null)
     pan.current = { active: true, sx: e.clientX, sy: e.clientY, ox: vp.x, oy: vp.y }
     const mv = (ev) => {
@@ -95,8 +99,10 @@ export default function App() {
   const updateNote = useCallback((id, note) =>
     setNodes(ns => ns.map(n => n.id === id ? { ...n, note } : n)), [])
 
+  const changeColor = useCallback((id, colorKey) =>
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, colorKey } : n)), [])
+
   const deleteNode = useCallback((id) => {
-    // delete node and all descendants
     const toDelete = new Set()
     const collect = (nid) => {
       toDelete.add(nid)
@@ -108,13 +114,11 @@ export default function App() {
     setSelected(s => toDelete.has(s) ? null : s)
   }, [nodes])
 
-  const toggleChildren = useCallback((id) => {
-    setNodes(ns => ns.map(n => n.id === id ? { ...n, collapsed: !n.collapsed } : n))
-  }, [])
+  const toggleChildren = useCallback((id) =>
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, collapsed: !n.collapsed } : n)), [])
 
-  const toggleProvoke = useCallback((id) => {
-    setNodes(ns => ns.map(n => n.id === id ? { ...n, provokeCollapsed: !n.provokeCollapsed } : n))
-  }, [])
+  const toggleProvoke = useCallback((id) =>
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, provokeCollapsed: !n.provokeCollapsed } : n)), [])
 
   const addNode = () => {
     const id = newId()
@@ -125,13 +129,13 @@ export default function App() {
     setNodes(ns => [...ns, {
       id, x: ox + Math.cos(angle) * r, y: oy + Math.sin(angle) * r,
       text: '新しいノード', isRoot: false, provoked: false, provokeData: null,
-      collapsed: false, provokeCollapsed: false, note: '',
-      parentId: anchor?.id || null,
+      collapsed: false, provokeCollapsed: false, note: '', parentId: anchor?.id || null,
     }])
     if (anchor) setEdges(es => [...es, { id: `e${newId()}`, from: anchor.id, to: id }])
     setSelected(id)
   }
 
+  // ── Single Provoke ──
   const provoke = useCallback(async (nodeId, nodeText) => {
     setProvokeLoading(true)
     try {
@@ -141,21 +145,117 @@ export default function App() {
       if (!parent) return
       const id = newId()
       const angle = Math.random() * Math.PI * 2
-      const r = 180 + Math.random() * 60
       setNodes(ns => [...ns, {
-        id,
-        x: parent.x + Math.cos(angle) * r,
-        y: parent.y + Math.sin(angle) * r,
-        text: data.label || '?',
-        isRoot: false, provoked: true, provokeData: data,
-        collapsed: false, provokeCollapsed: false, note: '',
-        parentId: nodeId,
+        id, x: parent.x + Math.cos(angle) * 180, y: parent.y + Math.sin(angle) * 180,
+        text: data.label || '?', isRoot: false,
+        provoked: true, provokeData: data,
+        collapsed: false, provokeCollapsed: false, note: '', parentId: nodeId,
       }])
       setEdges(es => [...es, { id: `e${newId()}`, from: nodeId, to: id }])
-    } finally {
-      setProvokeLoading(false)
-    }
+    } finally { setProvokeLoading(false) }
   }, [mode, nodes])
+
+  // ── Dual Provoke ──
+  const dualProvoke = useCallback(async (nodeId, nodeText) => {
+    setDualLoading(true)
+    try {
+      const [biz, phi] = await Promise.all([
+        callClaude(nodeText, 'business'),
+        callClaude(nodeText, 'philosophy'),
+      ])
+      const dualData = { mode: 'dual', business: biz, philosophy: phi, label: 'DUAL', text: '' }
+      setNodes(ns => ns.map(n => n.id === nodeId ? { ...n, provoked: true, provokeData: dualData, provokeCollapsed: false } : n))
+      const parent = nodes.find(n => n.id === nodeId)
+      if (!parent) return
+      // Spawn two child nodes
+      for (const [data, angle] of [[biz, -0.4], [phi, 0.4]]) {
+        const id = newId()
+        setNodes(ns => [...ns, {
+          id, x: parent.x + Math.cos(angle) * 200, y: parent.y + Math.sin(angle) * 200,
+          text: data.label || '?', isRoot: false,
+          provoked: true, provokeData: { ...data, mode: data === biz ? 'business' : 'philosophy' },
+          collapsed: false, provokeCollapsed: false, note: '', parentId: nodeId,
+        }])
+        setEdges(es => [...es, { id: `e${newId()}`, from: nodeId, to: id }])
+      }
+    } finally { setDualLoading(false) }
+  }, [nodes])
+
+  // ── Connect mode ──
+  const startConnect = useCallback((fromId) => {
+    setConnectFrom(fromId)
+    setSelected(null)
+  }, [])
+
+  const handleNodeSelect = useCallback((id) => {
+    if (connectFrom) {
+      if (id !== connectFrom) {
+        // Check if edge already exists
+        const exists = edges.some(e => (e.from === connectFrom && e.to === id) || (e.from === id && e.to === connectFrom))
+        if (!exists) {
+          setEdges(es => [...es, { id: `e${newId()}`, from: connectFrom, to: id }])
+        }
+      }
+      setConnectFrom(null)
+    } else {
+      setSelected(id)
+    }
+  }, [connectFrom, edges])
+
+  // ── Export PNG ──
+  const exportPng = useCallback(async () => {
+    const allNodes = nodes
+    if (!allNodes.length) return
+    const pad = 120
+    const minX = Math.min(...allNodes.map(n => n.x)) - pad
+    const maxX = Math.max(...allNodes.map(n => n.x)) + pad
+    const minY = Math.min(...allNodes.map(n => n.y)) - pad
+    const maxY = Math.max(...allNodes.map(n => n.y)) + pad
+    const W = maxX - minX, H = maxY - minY
+
+    const canvas = document.createElement('canvas')
+    canvas.width = W * 2; canvas.height = H * 2
+    const ctx = canvas.getContext('2d')
+    ctx.scale(2, 2)
+    ctx.fillStyle = theme.bg
+    ctx.fillRect(0, 0, W, H)
+
+    // Draw edges
+    edges.forEach(e => {
+      const f = nodes.find(n => n.id === e.from), t = nodes.find(n => n.id === e.to)
+      if (!f || !t) return
+      const x1 = f.x - minX, y1 = f.y - minY, x2 = t.x - minX, y2 = t.y - minY
+      const cpx = (x1 + x2) / 2
+      ctx.beginPath()
+      ctx.moveTo(x1, y1)
+      ctx.bezierCurveTo(cpx, y1, cpx, y2, x2, y2)
+      ctx.strokeStyle = t.provoked ? theme.provokedBorder : theme.edgeColor
+      ctx.lineWidth = t.provoked ? 1.5 : 1
+      ctx.stroke()
+    })
+
+    // Draw nodes
+    allNodes.forEach(n => {
+      const x = n.x - minX, y = n.y - minY
+      const w = n.isRoot ? 140 : 110, h = n.isRoot ? 48 : 40
+      const r = n.isRoot ? 16 : 12
+      ctx.fillStyle = n.provoked ? theme.provoked : theme.nodeBase
+      ctx.strokeStyle = n.provoked ? theme.provokedBorder : theme.nodeBorder
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.roundRect(x - w/2, y - h/2, w, h, r)
+      ctx.fill(); ctx.stroke()
+      ctx.fillStyle = n.provoked ? theme.provokedText : theme.nodeText
+      ctx.font = `${n.isRoot ? 700 : 500} ${n.isRoot ? 15 : 13}px system-ui`
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText(n.text.length > 18 ? n.text.slice(0, 18) + '…' : n.text, x, y)
+    })
+
+    const a = document.createElement('a')
+    a.href = canvas.toDataURL('image/png')
+    a.download = 'resonance-map.png'
+    a.click()
+  }, [nodes, edges, theme])
 
   // ── Auto layout ──
   useEffect(() => {
@@ -171,28 +271,20 @@ export default function App() {
     }))
   }, [curation]) // eslint-disable-line
 
-  // ── Collapsed nodes: hide descendants ──
+  // ── Visibility (collapsed) ──
   const collapsedIds = new Set(nodes.filter(n => n.collapsed).map(n => n.id))
   const hiddenIds = new Set()
-  const buildHidden = (parentId) => {
-    nodes.filter(n => n.parentId === parentId).forEach(n => {
-      hiddenIds.add(n.id)
-      buildHidden(n.id)
-    })
-  }
+  const buildHidden = (pid) => nodes.filter(n => n.parentId === pid).forEach(n => { hiddenIds.add(n.id); buildHidden(n.id) })
   collapsedIds.forEach(id => buildHidden(id))
-
   const visibleNodes = nodes.filter(n => !hiddenIds.has(n.id))
-  const visibleNodeIds = new Set(visibleNodes.map(n => n.id))
-  const visibleEdges = edges.filter(e => visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to))
+  const visibleIds = new Set(visibleNodes.map(n => n.id))
+  const visibleEdges = edges.filter(e => visibleIds.has(e.from) && visibleIds.has(e.to))
   const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]))
   const aiOn = hasApiKey()
   const selectedNodeObj = selected ? nodes.find(n => n.id === selected) : null
   const getChildCount = (id) => nodes.filter(n => n.parentId === id).length
 
-  // attach callback refs for inline edit & toggle
   visibleNodes.forEach(n => {
-    n._onTextCommit = (text) => updateText(n.id, text)
     n._onToggleProvoke = () => toggleProvoke(n.id)
   })
 
@@ -200,12 +292,12 @@ export default function App() {
     <div style={{
       width: '100vw', height: '100vh', overflow: 'hidden',
       background: theme.bg, position: 'relative',
-      fontFamily: theme.font,
-      transition: 'background 0.5s',
+      fontFamily: theme.font, transition: 'background 0.5s',
     }}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pglow { 0%,100%{opacity:.5} 50%{opacity:1} }
+        @keyframes pulse-ring { 0%,100%{opacity:1} 50%{opacity:0.4} }
         * { box-sizing: border-box; }
         button { font-family: inherit; }
       `}</style>
@@ -213,17 +305,14 @@ export default function App() {
       {/* Grid */}
       <div data-bg="1" style={{
         position: 'absolute', inset: 0, pointerEvents: 'none',
-        backgroundImage: `
-          linear-gradient(${theme.grid} 1px, transparent 1px),
-          linear-gradient(90deg, ${theme.grid} 1px, transparent 1px)
-        `,
+        backgroundImage: `linear-gradient(${theme.grid} 1px,transparent 1px),linear-gradient(90deg,${theme.grid} 1px,transparent 1px)`,
         backgroundSize: `${40 * vp.scale}px ${40 * vp.scale}px`,
         backgroundPosition: `${vp.x}px ${vp.y}px`,
       }} />
 
       {/* Canvas */}
       <div ref={canvasRef} onPointerDown={onCanvasDown} style={{ position: 'absolute', inset: 0 }}>
-        <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
+        <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
           <g transform={`translate(${vp.x + cx},${vp.y + cy}) scale(${vp.scale})`}>
             {visibleEdges.map(e => {
               const f = nodeMap[e.from], t = nodeMap[e.to]
@@ -237,7 +326,8 @@ export default function App() {
             {visibleNodes.map(n => (
               <MapNode key={n.id} node={n} theme={theme}
                 isSelected={selected === n.id}
-                onSelect={setSelected}
+                isConnectTarget={!!connectFrom && connectFrom !== n.id}
+                onSelect={handleNodeSelect}
                 onMove={updatePos}
                 scale={vp.scale}
                 childCount={getChildCount(n.id)}
@@ -266,9 +356,7 @@ export default function App() {
             <GitBranch size={13} color={theme.nodeAccent} />
           </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: theme.nodeText, letterSpacing: '0.06em' }}>
-              RESONANCE MAP
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: theme.nodeText, letterSpacing: '0.06em' }}>RESONANCE MAP</div>
             <div style={{ fontSize: 9, color: theme.nodeAccent, letterSpacing: '0.18em', fontFamily: 'monospace' }}>
               {mode === 'business' ? 'BUSINESS OS' : 'PHILOSOPHY OS'}
             </div>
@@ -278,19 +366,10 @@ export default function App() {
 
         <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 11, color: theme.nodeText, opacity: 0.45, fontFamily: 'monospace', letterSpacing: '0.1em' }}>BUSINESS</span>
-          <motion.div
-            onClick={() => setMode(m => m === 'business' ? 'philosophy' : 'business')}
-            style={{
-              width: 52, height: 26, borderRadius: 13,
-              background: theme.toggleBg, border: `1px solid ${theme.nodeBorder}`,
-              cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center',
-            }}
-          >
-            <motion.div
-              animate={{ x: mode === 'business' ? 3 : 27 }}
-              transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-              style={{ width: 20, height: 20, borderRadius: '50%', background: theme.nodeAccent, boxShadow: `0 0 10px ${theme.nodeAccent}88` }}
-            />
+          <motion.div onClick={() => setMode(m => m === 'business' ? 'philosophy' : 'business')}
+            style={{ width: 52, height: 26, borderRadius: 13, background: theme.toggleBg, border: `1px solid ${theme.nodeBorder}`, cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <motion.div animate={{ x: mode === 'business' ? 3 : 27 }} transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              style={{ width: 20, height: 20, borderRadius: '50%', background: theme.nodeAccent, boxShadow: `0 0 10px ${theme.nodeAccent}88` }} />
           </motion.div>
           <span style={{ fontSize: 11, color: theme.nodeText, opacity: 0.45, fontFamily: 'monospace', letterSpacing: '0.1em' }}>PHILOSOPHY</span>
         </div>
@@ -301,8 +380,7 @@ export default function App() {
         position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)',
         display: 'flex', alignItems: 'center', gap: 8,
         background: mode === 'business' ? 'rgba(4,10,24,0.9)' : 'rgba(16,13,8,0.92)',
-        border: `1px solid ${theme.nodeBorder}`,
-        borderRadius: 16, padding: '8px 12px',
+        border: `1px solid ${theme.nodeBorder}`, borderRadius: 16, padding: '8px 12px',
         backdropFilter: 'blur(16px)', boxShadow: theme.shadow,
       }}>
         <ToolbarBtn onClick={addNode} theme={theme} title="ノードを追加">
@@ -356,34 +434,56 @@ export default function App() {
             background: mode === 'business'
               ? 'radial-gradient(ellipse at 50% 40%,rgba(0,120,255,0.18),transparent 65%)'
               : 'radial-gradient(ellipse at 50% 40%,rgba(180,150,80,0.14),transparent 65%)',
-          }}
-        />
+          }} />
       </AnimatePresence>
 
-      {/* ── Bottom Sheet (node selected) ── */}
-      {selected && !noteTarget && (
+      {/* Connect mode banner */}
+      <AnimatePresence>
+        {connectFrom && (
+          <ConnectBanner
+            fromNode={nodes.find(n => n.id === connectFrom)}
+            theme={theme}
+            onCancel={() => setConnectFrom(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Bottom Sheet */}
+      {selected && !noteTarget && !editTextTarget && (
         <BottomSheet
           node={selectedNodeObj}
-          theme={theme}
-          aiOn={aiOn}
-          isLoading={provokeLoading}
+          theme={theme} aiOn={aiOn}
+          isLoading={provokeLoading} isDualLoading={dualLoading}
           childCount={getChildCount(selected)}
           onClose={() => setSelected(null)}
           onProvoke={provoke}
+          onDualProvoke={dualProvoke}
           onDelete={deleteNode}
           onToggleChildren={toggleChildren}
           onToggleProvoke={toggleProvoke}
           onEditNote={(id) => setNoteTarget(id)}
+          onEditText={(id) => setEditTextTarget(id)}
+          onChangeColor={changeColor}
+          onStartConnect={startConnect}
+          onExportPng={exportPng}
         />
       )}
 
-      {/* ── Note Modal ── */}
+      {/* Note Modal */}
       {noteTarget && (
         <NoteModal
           node={nodes.find(n => n.id === noteTarget)}
-          theme={theme}
-          onSave={updateNote}
+          theme={theme} onSave={updateNote}
           onClose={() => setNoteTarget(null)}
+        />
+      )}
+
+      {/* Edit Text Modal */}
+      {editTextTarget && (
+        <EditTextModal
+          node={nodes.find(n => n.id === editTextTarget)}
+          theme={theme} onSave={updateText}
+          onClose={() => setEditTextTarget(null)}
         />
       )}
 
