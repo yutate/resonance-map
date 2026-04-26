@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, LayoutGrid, Move, Sparkles, GitBranch } from 'lucide-react'
 import { MapNode } from './components/MapNode.jsx'
 import { Edge } from './components/Edge.jsx'
+import { BottomSheet } from './components/BottomSheet.jsx'
+import { NoteModal } from './components/NoteModal.jsx'
 import { ApiKeyBadge, ApiKeyModal } from './components/ApiKeyModal.jsx'
 import { callClaude, hasApiKey } from './api.js'
 import { BUSINESS_THEME, PHILOSOPHY_THEME, INITIAL_NODES, INITIAL_EDGES } from './themes.js'
@@ -39,7 +41,9 @@ export default function App() {
   const [selected, setSelected] = useState(null)
   const [vp, setVp] = useState({ x: 0, y: 0, scale: 1 })
   const [showKeyModal, setShowKeyModal] = useState(false)
-  const [, forceUpdate] = useState(0) // APIキー状態の再レンダリング用
+  const [noteTarget, setNoteTarget] = useState(null)
+  const [provokeLoading, setProvokeLoading] = useState(false)
+  const [, forceUpdate] = useState(0)
   const canvasRef = useRef(null)
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 })
 
@@ -47,6 +51,7 @@ export default function App() {
   const cx = window.innerWidth / 2
   const cy = window.innerHeight / 2
 
+  // ── Canvas pan ──
   const onCanvasDown = (e) => {
     const el = e.target
     if (!el.dataset.bg && el !== canvasRef.current) return
@@ -61,6 +66,7 @@ export default function App() {
     window.addEventListener('pointerup', up)
   }
 
+  // ── Wheel zoom ──
   useEffect(() => {
     const el = canvasRef.current
     if (!el) return
@@ -79,16 +85,35 @@ export default function App() {
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  // ── Node ops ──
   const updatePos = useCallback((id, x, y) =>
     setNodes(ns => ns.map(n => n.id === id ? { ...n, x, y } : n)), [])
 
   const updateText = useCallback((id, text) =>
     setNodes(ns => ns.map(n => n.id === id ? { ...n, text } : n)), [])
 
+  const updateNote = useCallback((id, note) =>
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, note } : n)), [])
+
   const deleteNode = useCallback((id) => {
-    setNodes(ns => ns.filter(n => n.id !== id))
-    setEdges(es => es.filter(e => e.from !== id && e.to !== id))
-    setSelected(s => s === id ? null : s)
+    // delete node and all descendants
+    const toDelete = new Set()
+    const collect = (nid) => {
+      toDelete.add(nid)
+      nodes.filter(n => n.parentId === nid).forEach(n => collect(n.id))
+    }
+    collect(id)
+    setNodes(ns => ns.filter(n => !toDelete.has(n.id)))
+    setEdges(es => es.filter(e => !toDelete.has(e.from) && !toDelete.has(e.to)))
+    setSelected(s => toDelete.has(s) ? null : s)
+  }, [nodes])
+
+  const toggleChildren = useCallback((id) => {
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, collapsed: !n.collapsed } : n))
+  }, [])
+
+  const toggleProvoke = useCallback((id) => {
+    setNodes(ns => ns.map(n => n.id === id ? { ...n, provokeCollapsed: !n.provokeCollapsed } : n))
   }, [])
 
   const addNode = () => {
@@ -100,29 +125,39 @@ export default function App() {
     setNodes(ns => [...ns, {
       id, x: ox + Math.cos(angle) * r, y: oy + Math.sin(angle) * r,
       text: '新しいノード', isRoot: false, provoked: false, provokeData: null,
+      collapsed: false, provokeCollapsed: false, note: '',
+      parentId: anchor?.id || null,
     }])
     if (anchor) setEdges(es => [...es, { id: `e${newId()}`, from: anchor.id, to: id }])
     setSelected(id)
   }
 
   const provoke = useCallback(async (nodeId, nodeText) => {
-    const data = await callClaude(nodeText, mode)
-    setNodes(ns => ns.map(n => n.id === nodeId ? { ...n, provoked: true, provokeData: data } : n))
-    const parent = nodes.find(n => n.id === nodeId)
-    if (!parent) return
-    const id = newId()
-    const angle = Math.random() * Math.PI * 2
-    const r = 170 + Math.random() * 60
-    setNodes(ns => [...ns, {
-      id,
-      x: parent.x + Math.cos(angle) * r,
-      y: parent.y + Math.sin(angle) * r,
-      text: data.label || '?',
-      isRoot: false, provoked: true, provokeData: data,
-    }])
-    setEdges(es => [...es, { id: `e${newId()}`, from: nodeId, to: id }])
+    setProvokeLoading(true)
+    try {
+      const data = await callClaude(nodeText, mode)
+      setNodes(ns => ns.map(n => n.id === nodeId ? { ...n, provoked: true, provokeData: data, provokeCollapsed: false } : n))
+      const parent = nodes.find(n => n.id === nodeId)
+      if (!parent) return
+      const id = newId()
+      const angle = Math.random() * Math.PI * 2
+      const r = 180 + Math.random() * 60
+      setNodes(ns => [...ns, {
+        id,
+        x: parent.x + Math.cos(angle) * r,
+        y: parent.y + Math.sin(angle) * r,
+        text: data.label || '?',
+        isRoot: false, provoked: true, provokeData: data,
+        collapsed: false, provokeCollapsed: false, note: '',
+        parentId: nodeId,
+      }])
+      setEdges(es => [...es, { id: `e${newId()}`, from: nodeId, to: id }])
+    } finally {
+      setProvokeLoading(false)
+    }
   }, [mode, nodes])
 
+  // ── Auto layout ──
   useEffect(() => {
     if (curation !== 'auto') return
     const root = nodes.find(n => n.isRoot)
@@ -132,12 +167,34 @@ export default function App() {
     setNodes(prev => prev.map(n => {
       if (n.isRoot) return { ...n, x: 0, y: 0 }
       const idx = children.findIndex(c => c.id === n.id)
-      return { ...n, x: 200, y: (idx - (total - 1) / 2) * 72 }
+      return { ...n, x: 200, y: (idx - (total - 1) / 2) * 80 }
     }))
   }, [curation]) // eslint-disable-line
 
+  // ── Collapsed nodes: hide descendants ──
+  const collapsedIds = new Set(nodes.filter(n => n.collapsed).map(n => n.id))
+  const hiddenIds = new Set()
+  const buildHidden = (parentId) => {
+    nodes.filter(n => n.parentId === parentId).forEach(n => {
+      hiddenIds.add(n.id)
+      buildHidden(n.id)
+    })
+  }
+  collapsedIds.forEach(id => buildHidden(id))
+
+  const visibleNodes = nodes.filter(n => !hiddenIds.has(n.id))
+  const visibleNodeIds = new Set(visibleNodes.map(n => n.id))
+  const visibleEdges = edges.filter(e => visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to))
   const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]))
   const aiOn = hasApiKey()
+  const selectedNodeObj = selected ? nodes.find(n => n.id === selected) : null
+  const getChildCount = (id) => nodes.filter(n => n.parentId === id).length
+
+  // attach callback refs for inline edit & toggle
+  visibleNodes.forEach(n => {
+    n._onTextCommit = (text) => updateText(n.id, text)
+    n._onToggleProvoke = () => toggleProvoke(n.id)
+  })
 
   return (
     <div style={{
@@ -168,7 +225,7 @@ export default function App() {
       <div ref={canvasRef} onPointerDown={onCanvasDown} style={{ position: 'absolute', inset: 0 }}>
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
           <g transform={`translate(${vp.x + cx},${vp.y + cy}) scale(${vp.scale})`}>
-            {edges.map(e => {
+            {visibleEdges.map(e => {
               const f = nodeMap[e.from], t = nodeMap[e.to]
               return <Edge key={e.id} from={f} to={t} theme={theme} isProvoked={t?.provoked || f?.provoked} />
             })}
@@ -177,12 +234,13 @@ export default function App() {
 
         <div style={{ position: 'absolute', left: vp.x + cx, top: vp.y + cy, transform: `scale(${vp.scale})`, transformOrigin: '0 0' }}>
           <AnimatePresence>
-            {nodes.map(n => (
+            {visibleNodes.map(n => (
               <MapNode key={n.id} node={n} theme={theme}
-                isSelected={selected === n.id} aiOn={aiOn}
-                onSelect={setSelected} onMove={updatePos}
-                onProvoke={provoke} onDelete={deleteNode}
-                onTextChange={updateText} scale={vp.scale}
+                isSelected={selected === n.id}
+                onSelect={setSelected}
+                onMove={updatePos}
+                scale={vp.scale}
+                childCount={getChildCount(n.id)}
               />
             ))}
           </AnimatePresence>
@@ -197,7 +255,6 @@ export default function App() {
         background: `linear-gradient(180deg,${theme.bg}f2 0%,transparent 100%)`,
         pointerEvents: 'none',
       }}>
-        {/* Logo + AI badge */}
         <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
           <div style={{
             width: 28, height: 28, borderRadius: '50%',
@@ -219,7 +276,6 @@ export default function App() {
           <ApiKeyBadge theme={theme} onOpen={() => setShowKeyModal(true)} />
         </div>
 
-        {/* Mode toggle */}
         <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 11, color: theme.nodeText, opacity: 0.45, fontFamily: 'monospace', letterSpacing: '0.1em' }}>BUSINESS</span>
           <motion.div
@@ -286,10 +342,10 @@ export default function App() {
         fontSize: 10, color: theme.nodeText, opacity: 0.22,
         fontFamily: 'monospace', letterSpacing: '0.08em', lineHeight: 1.9, pointerEvents: 'none',
       }}>
-        <div>DBL-CLICK → EDIT</div>
+        <div>TAP → MENU</div>
+        <div>DBL-TAP → EDIT</div>
         <div>DRAG → MOVE / PAN</div>
         <div>SCROLL → ZOOM</div>
-        <div>⚡ → PROVOKE {aiOn ? 'AI' : 'STOIC'}</div>
       </div>
 
       {/* Mode flash */}
@@ -303,6 +359,33 @@ export default function App() {
           }}
         />
       </AnimatePresence>
+
+      {/* ── Bottom Sheet (node selected) ── */}
+      {selected && !noteTarget && (
+        <BottomSheet
+          node={selectedNodeObj}
+          theme={theme}
+          aiOn={aiOn}
+          isLoading={provokeLoading}
+          childCount={getChildCount(selected)}
+          onClose={() => setSelected(null)}
+          onProvoke={provoke}
+          onDelete={deleteNode}
+          onToggleChildren={toggleChildren}
+          onToggleProvoke={toggleProvoke}
+          onEditNote={(id) => setNoteTarget(id)}
+        />
+      )}
+
+      {/* ── Note Modal ── */}
+      {noteTarget && (
+        <NoteModal
+          node={nodes.find(n => n.id === noteTarget)}
+          theme={theme}
+          onSave={updateNote}
+          onClose={() => setNoteTarget(null)}
+        />
+      )}
 
       {/* API Key Modal */}
       {showKeyModal && (

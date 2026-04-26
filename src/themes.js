@@ -32,12 +32,18 @@ export const PHILOSOPHY_THEME = {
   font: "Georgia, 'Times New Roman', serif",
 }
 
+const node = (id, text, parentId, x, y, colorIdx, isRoot = false) => ({
+  id, text, parentId, x, y, colorIdx, isRoot,
+  provoked: false, provokeData: null,
+  collapsed: false, provokeCollapsed: false, note: '',
+})
+
 export const INITIAL_NODES = [
-  { id: 'n1', x: 0,    y: 0,    text: '中心テーマ',   isRoot: true,  provoked: false, provokeData: null },
-  { id: 'n2', x: 280,  y: -120, text: 'ブランド戦略', isRoot: false, provoked: false, provokeData: null },
-  { id: 'n3', x: 280,  y: 80,   text: '顧客体験',     isRoot: false, provoked: false, provokeData: null },
-  { id: 'n4', x: -260, y: -80,  text: '組織文化',     isRoot: false, provoked: false, provokeData: null },
-  { id: 'n5', x: -240, y: 120,  text: '価値創造',     isRoot: false, provoked: false, provokeData: null },
+  node('n1', '中心テーマ',   null, 0,    0,    0, true),
+  node('n2', 'ブランド戦略', 'n1', 280, -120, 1),
+  node('n3', '顧客体験',     'n1', 280,  80,  2),
+  node('n4', '組織文化',     'n1', -260, -80, 3),
+  node('n5', '価値創造',     'n1', -240, 120, 4),
 ]
 
 export const INITIAL_EDGES = [
