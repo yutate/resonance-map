@@ -656,6 +656,15 @@ export default function App() {
         <ToolbarBtn onClick={() => setVp({ x: 0, y: 0, scale: 1 })} theme={theme} title="ビューをリセット">
           <LayoutGrid size={14} />
         </ToolbarBtn>
+        <div style={{ width: 1, height: 20, background: theme.nodeBorder }} />
+        <ToolbarBtn onClick={() => {
+          try {
+            localStorage.setItem('resonance-map:3d-transfer', JSON.stringify({ nodes, edges, name: mapName }))
+          } catch {}
+          window.open('./3d/', '_blank')
+        }} theme={theme} title="3Dで見る">
+          <span>◈ 3D</span>
+        </ToolbarBtn>
       </div>
 
       {/* Auto save indicator */}
