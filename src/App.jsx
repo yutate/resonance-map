@@ -8,11 +8,14 @@ import { NoteModal } from './components/NoteModal.jsx'
 import { EditTextModal } from './components/EditTextModal.jsx'
 import { ConnectBanner } from './components/ConnectMode.jsx'
 import { ApiKeyBadge, ApiKeyModal } from './components/ApiKeyModal.jsx'
+import { MapManagerBtn, MapManagerModal } from './components/MapManager.jsx'
 import { callClaude, hasApiKey } from './api.js'
+import { saveMap, loadMap, getLastMapId } from './storage.js'
 import { BUSINESS_THEME, PHILOSOPHY_THEME, INITIAL_NODES, INITIAL_EDGES } from './themes.js'
 
 let _id = 10
 const newId = () => `n${++_id}`
+const genMapId = () => `map-${Date.now()}`
 
 function ToolbarBtn({ onClick, theme, title, children }) {
   const [hov, setHov] = useState(false)
@@ -32,27 +35,54 @@ function ToolbarBtn({ onClick, theme, title, children }) {
   )
 }
 
+// ── Load initial state from localStorage ──
+function getInitialState() {
+  const lastId = getLastMapId()
+  if (lastId) {
+    const m = loadMap(lastId)
+    if (m) return { mapId: lastId, mapName: m.name, nodes: m.nodes, edges: m.edges }
+  }
+  return { mapId: genMapId(), mapName: '無題のマップ', nodes: INITIAL_NODES, edges: INITIAL_EDGES }
+}
+
 export default function App() {
+  const init = getInitialState()
   const [mode, setMode] = useState('business')
   const [curation, setCuration] = useState('manual')
-  const [nodes, setNodes] = useState(INITIAL_NODES)
-  const [edges, setEdges] = useState(INITIAL_EDGES)
+  const [nodes, setNodes] = useState(init.nodes)
+  const [edges, setEdges] = useState(init.edges)
+  const [mapId, setMapId] = useState(init.mapId)
+  const [mapName, setMapName] = useState(init.mapName)
   const [selected, setSelected] = useState(null)
   const [vp, setVp] = useState({ x: 0, y: 0, scale: 1 })
   const [showKeyModal, setShowKeyModal] = useState(false)
+  const [showMapManager, setShowMapManager] = useState(false)
   const [noteTarget, setNoteTarget] = useState(null)
   const [editTextTarget, setEditTextTarget] = useState(null)
   const [connectFrom, setConnectFrom] = useState(null)
   const [provokeLoading, setProvokeLoading] = useState(false)
   const [dualLoading, setDualLoading] = useState(false)
+  const [autoSaveFlash, setAutoSaveFlash] = useState(false)
   const [, forceUpdate] = useState(0)
   const canvasRef = useRef(null)
   const svgRef = useRef(null)
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 })
+  const autoSaveTimer = useRef(null)
 
   const theme = mode === 'business' ? BUSINESS_THEME : PHILOSOPHY_THEME
   const cx = window.innerWidth / 2
   const cy = window.innerHeight / 2
+
+  // ── Auto save (debounced 2s) ──
+  useEffect(() => {
+    clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(() => {
+      saveMap(mapId, mapName, nodes, edges)
+      setAutoSaveFlash(true)
+      setTimeout(() => setAutoSaveFlash(false), 1000)
+    }, 2000)
+    return () => clearTimeout(autoSaveTimer.current)
+  }, [nodes, edges, mapId, mapName])
 
   // ── Canvas pan ──
   const onCanvasDown = (e) => {
@@ -135,7 +165,7 @@ export default function App() {
     setSelected(id)
   }
 
-  // ── Single Provoke ──
+  // ── Provoke ──
   const provoke = useCallback(async (nodeId, nodeText) => {
     setProvokeLoading(true)
     try {
@@ -167,13 +197,12 @@ export default function App() {
       setNodes(ns => ns.map(n => n.id === nodeId ? { ...n, provoked: true, provokeData: dualData, provokeCollapsed: false } : n))
       const parent = nodes.find(n => n.id === nodeId)
       if (!parent) return
-      // Spawn two child nodes
       for (const [data, angle] of [[biz, -0.4], [phi, 0.4]]) {
         const id = newId()
         setNodes(ns => [...ns, {
           id, x: parent.x + Math.cos(angle) * 200, y: parent.y + Math.sin(angle) * 200,
           text: data.label || '?', isRoot: false,
-          provoked: true, provokeData: { ...data, mode: data === biz ? 'business' : 'philosophy' },
+          provoked: true, provokeData: { ...data },
           collapsed: false, provokeCollapsed: false, note: '', parentId: nodeId,
         }])
         setEdges(es => [...es, { id: `e${newId()}`, from: nodeId, to: id }])
@@ -181,20 +210,16 @@ export default function App() {
     } finally { setDualLoading(false) }
   }, [nodes])
 
-  // ── Connect mode ──
+  // ── Connect ──
   const startConnect = useCallback((fromId) => {
-    setConnectFrom(fromId)
-    setSelected(null)
+    setConnectFrom(fromId); setSelected(null)
   }, [])
 
   const handleNodeSelect = useCallback((id) => {
     if (connectFrom) {
       if (id !== connectFrom) {
-        // Check if edge already exists
         const exists = edges.some(e => (e.from === connectFrom && e.to === id) || (e.from === id && e.to === connectFrom))
-        if (!exists) {
-          setEdges(es => [...es, { id: `e${newId()}`, from: connectFrom, to: id }])
-        }
+        if (!exists) setEdges(es => [...es, { id: `e${newId()}`, from: connectFrom, to: id }])
       }
       setConnectFrom(null)
     } else {
@@ -204,58 +229,59 @@ export default function App() {
 
   // ── Export PNG ──
   const exportPng = useCallback(async () => {
-    const allNodes = nodes
-    if (!allNodes.length) return
     const pad = 120
-    const minX = Math.min(...allNodes.map(n => n.x)) - pad
-    const maxX = Math.max(...allNodes.map(n => n.x)) + pad
-    const minY = Math.min(...allNodes.map(n => n.y)) - pad
-    const maxY = Math.max(...allNodes.map(n => n.y)) + pad
+    const minX = Math.min(...nodes.map(n => n.x)) - pad
+    const maxX = Math.max(...nodes.map(n => n.x)) + pad
+    const minY = Math.min(...nodes.map(n => n.y)) - pad
+    const maxY = Math.max(...nodes.map(n => n.y)) + pad
     const W = maxX - minX, H = maxY - minY
-
     const canvas = document.createElement('canvas')
     canvas.width = W * 2; canvas.height = H * 2
     const ctx = canvas.getContext('2d')
     ctx.scale(2, 2)
-    ctx.fillStyle = theme.bg
-    ctx.fillRect(0, 0, W, H)
-
-    // Draw edges
+    ctx.fillStyle = theme.bg; ctx.fillRect(0, 0, W, H)
     edges.forEach(e => {
       const f = nodes.find(n => n.id === e.from), t = nodes.find(n => n.id === e.to)
       if (!f || !t) return
       const x1 = f.x - minX, y1 = f.y - minY, x2 = t.x - minX, y2 = t.y - minY
-      const cpx = (x1 + x2) / 2
-      ctx.beginPath()
-      ctx.moveTo(x1, y1)
-      ctx.bezierCurveTo(cpx, y1, cpx, y2, x2, y2)
-      ctx.strokeStyle = t.provoked ? theme.provokedBorder : theme.edgeColor
-      ctx.lineWidth = t.provoked ? 1.5 : 1
-      ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x1, y1)
+      ctx.bezierCurveTo((x1+x2)/2, y1, (x1+x2)/2, y2, x2, y2)
+      ctx.strokeStyle = t.provoked ? theme.provokedBorder : 'rgba(140,170,255,0.55)'
+      ctx.lineWidth = 2; ctx.stroke()
     })
-
-    // Draw nodes
-    allNodes.forEach(n => {
+    nodes.forEach(n => {
       const x = n.x - minX, y = n.y - minY
-      const w = n.isRoot ? 140 : 110, h = n.isRoot ? 48 : 40
-      const r = n.isRoot ? 16 : 12
+      const w = n.isRoot ? 140 : 110, h = n.isRoot ? 48 : 40, r = n.isRoot ? 16 : 12
       ctx.fillStyle = n.provoked ? theme.provoked : theme.nodeBase
       ctx.strokeStyle = n.provoked ? theme.provokedBorder : theme.nodeBorder
       ctx.lineWidth = 1.5
-      ctx.beginPath()
-      ctx.roundRect(x - w/2, y - h/2, w, h, r)
-      ctx.fill(); ctx.stroke()
+      ctx.beginPath(); ctx.roundRect(x - w/2, y - h/2, w, h, r); ctx.fill(); ctx.stroke()
       ctx.fillStyle = n.provoked ? theme.provokedText : theme.nodeText
       ctx.font = `${n.isRoot ? 700 : 500} ${n.isRoot ? 15 : 13}px system-ui`
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       ctx.fillText(n.text.length > 18 ? n.text.slice(0, 18) + '…' : n.text, x, y)
     })
-
     const a = document.createElement('a')
     a.href = canvas.toDataURL('image/png')
-    a.download = 'resonance-map.png'
-    a.click()
-  }, [nodes, edges, theme])
+    a.download = `${mapName}.png`; a.click()
+  }, [nodes, edges, theme, mapName])
+
+  // ── Map management ──
+  const handleLoadMap = (data) => {
+    setNodes(data.nodes || INITIAL_NODES)
+    setEdges(data.edges || INITIAL_EDGES)
+    if (data.name) setMapName(data.name)
+    setSelected(null)
+  }
+
+  const handleNewMap = () => {
+    const id = genMapId()
+    setMapId(id)
+    setMapName('無題のマップ')
+    setNodes(INITIAL_NODES)
+    setEdges(INITIAL_EDGES)
+    setSelected(null)
+  }
 
   // ── Auto layout ──
   useEffect(() => {
@@ -271,7 +297,7 @@ export default function App() {
     }))
   }, [curation]) // eslint-disable-line
 
-  // ── Visibility (collapsed) ──
+  // ── Visibility ──
   const collapsedIds = new Set(nodes.filter(n => n.collapsed).map(n => n.id))
   const hiddenIds = new Set()
   const buildHidden = (pid) => nodes.filter(n => n.parentId === pid).forEach(n => { hiddenIds.add(n.id); buildHidden(n.id) })
@@ -284,9 +310,7 @@ export default function App() {
   const selectedNodeObj = selected ? nodes.find(n => n.id === selected) : null
   const getChildCount = (id) => nodes.filter(n => n.parentId === id).length
 
-  visibleNodes.forEach(n => {
-    n._onToggleProvoke = () => toggleProvoke(n.id)
-  })
+  visibleNodes.forEach(n => { n._onToggleProvoke = () => toggleProvoke(n.id) })
 
   return (
     <div style={{
@@ -298,6 +322,7 @@ export default function App() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pglow { 0%,100%{opacity:.5} 50%{opacity:1} }
         @keyframes pulse-ring { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        @keyframes fadeout { 0%{opacity:1} 100%{opacity:0} }
         * { box-sizing: border-box; }
         button { font-family: inherit; }
       `}</style>
@@ -320,17 +345,14 @@ export default function App() {
             })}
           </g>
         </svg>
-
         <div style={{ position: 'absolute', left: vp.x + cx, top: vp.y + cy, transform: `scale(${vp.scale})`, transformOrigin: '0 0' }}>
           <AnimatePresence>
             {visibleNodes.map(n => (
               <MapNode key={n.id} node={n} theme={theme}
                 isSelected={selected === n.id}
                 isConnectTarget={!!connectFrom && connectFrom !== n.id}
-                onSelect={handleNodeSelect}
-                onMove={updatePos}
-                scale={vp.scale}
-                childCount={getChildCount(n.id)}
+                onSelect={handleNodeSelect} onMove={updatePos}
+                scale={vp.scale} childCount={getChildCount(n.id)}
               />
             ))}
           </AnimatePresence>
@@ -345,33 +367,34 @@ export default function App() {
         background: `linear-gradient(180deg,${theme.bg}f2 0%,transparent 100%)`,
         pointerEvents: 'none',
       }}>
-        <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
+        <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{
             width: 28, height: 28, borderRadius: '50%',
             border: `1px solid ${theme.nodeAccent}55`,
             background: `radial-gradient(circle,${theme.nodeAccent}33,transparent)`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            animation: 'pglow 3s ease-in-out infinite',
+            animation: 'pglow 3s ease-in-out infinite', flexShrink: 0,
           }}>
             <GitBranch size={13} color={theme.nodeAccent} />
           </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: theme.nodeText, letterSpacing: '0.06em' }}>RESONANCE MAP</div>
-            <div style={{ fontSize: 9, color: theme.nodeAccent, letterSpacing: '0.18em', fontFamily: 'monospace' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: theme.nodeText, letterSpacing: '0.06em' }}>RESONANCE MAP</div>
+            <div style={{ fontSize: 9, color: theme.nodeAccent, letterSpacing: '0.15em', fontFamily: 'monospace' }}>
               {mode === 'business' ? 'BUSINESS OS' : 'PHILOSOPHY OS'}
             </div>
           </div>
+          <MapManagerBtn theme={theme} onOpen={() => setShowMapManager(true)} mapName={mapName} />
           <ApiKeyBadge theme={theme} onOpen={() => setShowKeyModal(true)} />
         </div>
 
-        <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 11, color: theme.nodeText, opacity: 0.45, fontFamily: 'monospace', letterSpacing: '0.1em' }}>BUSINESS</span>
+        <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: theme.nodeText, opacity: 0.4, fontFamily: 'monospace' }}>BIZ</span>
           <motion.div onClick={() => setMode(m => m === 'business' ? 'philosophy' : 'business')}
-            style={{ width: 52, height: 26, borderRadius: 13, background: theme.toggleBg, border: `1px solid ${theme.nodeBorder}`, cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <motion.div animate={{ x: mode === 'business' ? 3 : 27 }} transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-              style={{ width: 20, height: 20, borderRadius: '50%', background: theme.nodeAccent, boxShadow: `0 0 10px ${theme.nodeAccent}88` }} />
+            style={{ width: 44, height: 24, borderRadius: 12, background: theme.toggleBg, border: `1px solid ${theme.nodeBorder}`, cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <motion.div animate={{ x: mode === 'business' ? 2 : 22 }} transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              style={{ width: 18, height: 18, borderRadius: '50%', background: theme.nodeAccent, boxShadow: `0 0 8px ${theme.nodeAccent}88` }} />
           </motion.div>
-          <span style={{ fontSize: 11, color: theme.nodeText, opacity: 0.45, fontFamily: 'monospace', letterSpacing: '0.1em' }}>PHILOSOPHY</span>
+          <span style={{ fontSize: 10, color: theme.nodeText, opacity: 0.4, fontFamily: 'monospace' }}>PHI</span>
         </div>
       </div>
 
@@ -414,14 +437,25 @@ export default function App() {
         </ToolbarBtn>
       </div>
 
+      {/* Auto save indicator */}
+      {autoSaveFlash && (
+        <div style={{
+          position: 'fixed', bottom: 80, right: 16,
+          fontSize: 10, color: theme.nodeAccent, fontFamily: 'monospace',
+          opacity: 0, animation: 'fadeout 1s ease forwards',
+          pointerEvents: 'none',
+        }}>
+          ✓ 自動保存
+        </div>
+      )}
+
       {/* Hint */}
       <div style={{
         position: 'absolute', top: 68, left: 20,
-        fontSize: 10, color: theme.nodeText, opacity: 0.22,
+        fontSize: 10, color: theme.nodeText, opacity: 0.2,
         fontFamily: 'monospace', letterSpacing: '0.08em', lineHeight: 1.9, pointerEvents: 'none',
       }}>
         <div>TAP → MENU</div>
-        <div>DBL-TAP → EDIT</div>
         <div>DRAG → MOVE / PAN</div>
         <div>SCROLL → ZOOM</div>
       </div>
@@ -437,29 +471,22 @@ export default function App() {
           }} />
       </AnimatePresence>
 
-      {/* Connect mode banner */}
+      {/* Connect banner */}
       <AnimatePresence>
         {connectFrom && (
-          <ConnectBanner
-            fromNode={nodes.find(n => n.id === connectFrom)}
-            theme={theme}
-            onCancel={() => setConnectFrom(null)}
-          />
+          <ConnectBanner fromNode={nodes.find(n => n.id === connectFrom)} theme={theme} onCancel={() => setConnectFrom(null)} />
         )}
       </AnimatePresence>
 
       {/* Bottom Sheet */}
       {selected && !noteTarget && !editTextTarget && (
         <BottomSheet
-          node={selectedNodeObj}
-          theme={theme} aiOn={aiOn}
+          node={selectedNodeObj} theme={theme} aiOn={aiOn}
           isLoading={provokeLoading} isDualLoading={dualLoading}
           childCount={getChildCount(selected)}
           onClose={() => setSelected(null)}
-          onProvoke={provoke}
-          onDualProvoke={dualProvoke}
-          onDelete={deleteNode}
-          onToggleChildren={toggleChildren}
+          onProvoke={provoke} onDualProvoke={dualProvoke}
+          onDelete={deleteNode} onToggleChildren={toggleChildren}
           onToggleProvoke={toggleProvoke}
           onEditNote={(id) => setNoteTarget(id)}
           onEditText={(id) => setEditTextTarget(id)}
@@ -471,19 +498,24 @@ export default function App() {
 
       {/* Note Modal */}
       {noteTarget && (
-        <NoteModal
-          node={nodes.find(n => n.id === noteTarget)}
-          theme={theme} onSave={updateNote}
-          onClose={() => setNoteTarget(null)}
-        />
+        <NoteModal node={nodes.find(n => n.id === noteTarget)} theme={theme}
+          onSave={updateNote} onClose={() => setNoteTarget(null)} />
       )}
 
       {/* Edit Text Modal */}
       {editTextTarget && (
-        <EditTextModal
-          node={nodes.find(n => n.id === editTextTarget)}
-          theme={theme} onSave={updateText}
-          onClose={() => setEditTextTarget(null)}
+        <EditTextModal node={nodes.find(n => n.id === editTextTarget)} theme={theme}
+          onSave={updateText} onClose={() => setEditTextTarget(null)} />
+      )}
+
+      {/* Map Manager */}
+      {showMapManager && (
+        <MapManagerModal
+          theme={theme}
+          currentMapId={mapId} currentName={mapName}
+          nodes={nodes} edges={edges}
+          onLoad={handleLoadMap} onNew={handleNewMap}
+          onClose={() => setShowMapManager(false)}
         />
       )}
 
