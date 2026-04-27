@@ -88,12 +88,11 @@ export default function App() {
     return () => clearTimeout(autoSaveTimer.current)
   }, [nodes, edges, mapId, mapName])
 
-  // ── Canvas: 1本指タップ（背景）→ 選択解除、2本指→パン＋ズーム ──
+  // ── Canvas: PCマウスはそのままパン、タッチはtouch eventsで処理 ──
   const onCanvasDown = (e) => {
     const el = e.target
     if (!el.dataset.bg && el !== canvasRef.current) return
     if (connectFrom) { setConnectFrom(null); return }
-    // マウス（PCの1本指）はそのままパン
     if (e.pointerType === 'mouse') {
       setSelected(null)
       setSheetOpen(false)
@@ -106,67 +105,85 @@ export default function App() {
       window.addEventListener('pointermove', mv)
       window.addEventListener('pointerup', up)
     } else {
-      // タッチの1本指タップ → 選択解除のみ（パンは touch events で処理）
       setSelected(null)
       setSheetOpen(false)
     }
   }
 
-  // ── Touch: 2本指パン＋ピンチズーム ──
+  // ── Touch: 2本指パン＋ピンチズーム（refで最新vpを参照）──
+  const vpRef = useRef(vp)
+  useEffect(() => { vpRef.current = vp }, [vp])
+
   useEffect(() => {
     const el = canvasRef.current
     if (!el) return
-    const touches = new Map()
-    let pinchState = null
-    let panState = null
 
-    const onTouchStart = (e) => {
-      for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY })
-      const arr = [...touches.values()]
+    const touchMap = new Map()
+    let pinch = null // { dist0, scale0, mx0, my0, vpX0, vpY0 }
+    let pan2 = null  // { mx0, my0, vpX0, vpY0 }
 
+    const getArr = () => [...touchMap.values()]
+
+    const onStart = (e) => {
+      for (const t of e.changedTouches) {
+        touchMap.set(t.identifier, { x: t.clientX, y: t.clientY })
+      }
+      const arr = getArr()
       if (arr.length === 2) {
         const [a, b] = arr
-        const dist = Math.hypot(b.x - a.x, b.y - a.y)
+        const d = Math.hypot(b.x - a.x, b.y - a.y)
         const mx = (a.x + b.x) / 2
-        const my = (a.y + b.y) / 2 - el.getBoundingClientRect().top
-        pinchState = { dist, scale: vp.scale, mx, my, vpX: vp.x, vpY: vp.y, pmx: mx, pmy: my }
-        panState = null
+        const my = (a.y + b.y) / 2
+        const { x: vpX, y: vpY, scale } = vpRef.current
+        pinch = { dist0: d, scale0: scale, mx0: mx, my0: my, vpX0: vpX, vpY0: vpY }
+        pan2 = { mx0: mx, my0: my, vpX0: vpX, vpY0: vpY }
       }
     }
 
-    const onTouchMove = (e) => {
+    const onMove = (e) => {
       e.preventDefault()
-      for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY })
-      const arr = [...touches.values()]
-
-      if (arr.length >= 2 && pinchState) {
-        const [a, b] = arr
-        const newDist = Math.hypot(b.x - a.x, b.y - a.y)
-        const newMx = (a.x + b.x) / 2
-        const newMy = (a.y + b.y) / 2 - el.getBoundingClientRect().top
-        const factor = newDist / pinchState.dist
-        const newScale = Math.min(4, Math.max(0.15, pinchState.scale * factor))
-        const { mx, my, vpX, vpY } = pinchState
-        const newVpX = mx - (mx - vpX) * (newScale / pinchState.scale) + (newMx - mx)
-        const newVpY = my - (my - vpY) * (newScale / pinchState.scale) + (newMy - my)
-        setVp({ scale: newScale, x: newVpX, y: newVpY })
+      for (const t of e.changedTouches) {
+        touchMap.set(t.identifier, { x: t.clientX, y: t.clientY })
       }
+      const arr = getArr()
+      if (arr.length < 2 || !pinch) return
+
+      const [a, b] = arr
+      const newDist = Math.hypot(b.x - a.x, b.y - a.y)
+      const newMx = (a.x + b.x) / 2
+      const newMy = (a.y + b.y) / 2
+
+      const factor = newDist / pinch.dist0
+      const newScale = Math.min(4, Math.max(0.15, pinch.scale0 * factor))
+
+      // Zoom around initial midpoint
+      const zoomX = pinch.mx0 - (pinch.mx0 - pinch.vpX0) * (newScale / pinch.scale0)
+      const zoomY = pinch.my0 - (pinch.my0 - pinch.vpY0) * (newScale / pinch.scale0)
+
+      // Pan: midpoint movement
+      const panDx = newMx - pinch.mx0
+      const panDy = newMy - pinch.my0
+
+      setVp({ scale: newScale, x: zoomX + panDx, y: zoomY + panDy })
     }
 
-    const onTouchEnd = (e) => {
-      for (const t of e.changedTouches) touches.delete(t.identifier)
-      if (touches.size < 2) pinchState = null
+    const onEnd = (e) => {
+      for (const t of e.changedTouches) touchMap.delete(t.identifier)
+      if (touchMap.size < 2) { pinch = null; pan2 = null }
     }
 
-    el.addEventListener('touchstart', onTouchStart, { passive: true })
-    el.addEventListener('touchmove', onTouchMove, { passive: false })
-    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: false })
+    el.addEventListener('touchend', onEnd, { passive: true })
+    el.addEventListener('touchcancel', onEnd, { passive: true })
+
     return () => {
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
     }
-  }, [vp])
+  }, []) // 空配列: 一度だけ登録、vpはrefで最新を参照
 
   // ── Wheel zoom ──
   useEffect(() => {
