@@ -13,12 +13,13 @@ const COLOR_MAP = {
 
 export function MapNode({
   node, theme, isSelected, isConnectTarget,
-  onSelect, onMove, onDragConnectStart,
+  onSelect, onOpenSheet, onMove, onDragConnectStart,
   scale, childCount,
 }) {
   const drag = useRef({ active: false, moved: false, sx: 0, sy: 0, ox: 0, oy: 0 })
+  const lastTap = useRef(0)
 
-  // ── Main node drag / tap ──
+  // ── Main node pointer: drag = move, single tap = select, double tap = sheet ──
   const onPointerDown = (e) => {
     e.stopPropagation()
     drag.current = { active: true, moved: false, sx: e.clientX, sy: e.clientY, ox: node.x, oy: node.y }
@@ -26,14 +27,25 @@ export function MapNode({
       if (!drag.current.active) return
       const dx = (ev.clientX - drag.current.sx) / scale
       const dy = (ev.clientY - drag.current.sy) / scale
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) drag.current.moved = true
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) drag.current.moved = true
       if (drag.current.moved) onMove(node.id, drag.current.ox + dx, drag.current.oy + dy)
     }
     const up = () => {
       drag.current.active = false
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      if (!drag.current.moved) onSelect(node.id)
+      if (!drag.current.moved) {
+        const now = Date.now()
+        if (now - lastTap.current < 320) {
+          // double tap → open sheet
+          lastTap.current = 0
+          onOpenSheet(node.id)
+        } else {
+          // single tap → select
+          lastTap.current = now
+          onSelect(node.id)
+        }
+      }
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)

@@ -57,6 +57,7 @@ export default function App() {
   const [vp, setVp] = useState({ x: 0, y: 0, scale: 1 })
   const [showKeyModal, setShowKeyModal] = useState(false)
   const [showMapManager, setShowMapManager] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
   const [noteTarget, setNoteTarget] = useState(null)
   const [editTextTarget, setEditTextTarget] = useState(null)
   const [connectFrom, setConnectFrom] = useState(null)
@@ -91,6 +92,7 @@ export default function App() {
     if (!el.dataset.bg && el !== canvasRef.current) return
     if (connectFrom) { setConnectFrom(null); return }
     setSelected(null)
+    setSheetOpen(false)
     pan.current = { active: true, sx: e.clientX, sy: e.clientY, ox: vp.x, oy: vp.y }
     const mv = (ev) => {
       if (!pan.current.active) return
@@ -263,6 +265,7 @@ export default function App() {
     setEdges(es => es.filter(e => e.id !== edgeId))
   }, [])
 
+  // シングルタップ → 選択のみ（ボトムシートは出さない）
   const handleNodeSelect = useCallback((id) => {
     if (connectFrom) {
       if (id !== connectFrom) {
@@ -274,6 +277,13 @@ export default function App() {
       setSelected(id)
     }
   }, [connectFrom, edges])
+
+  // ダブルタップ → ボトムシートを開く
+  const handleOpenSheet = useCallback((id) => {
+    setSelected(id)
+    // BottomSheetはselectedがある＆sheetOpenがtrueのとき表示
+    setSheetOpen(true)
+  }, [])
 
   // ── Export PNG ──
   const exportPng = useCallback(async () => {
@@ -417,6 +427,7 @@ export default function App() {
                 isSelected={selected === n.id}
                 isConnectTarget={!!connectFrom && connectFrom !== n.id}
                 onSelect={handleNodeSelect}
+                onOpenSheet={handleOpenSheet}
                 onMove={updatePos}
                 onDragConnectStart={handleDragConnectStart}
                 scale={vp.scale}
@@ -517,15 +528,16 @@ export default function App() {
         </div>
       )}
 
-      {/* Hint */}
       <div style={{
         position: 'absolute', top: 68, left: 20,
         fontSize: 10, color: theme.nodeText, opacity: 0.2,
         fontFamily: 'monospace', letterSpacing: '0.08em', lineHeight: 1.9, pointerEvents: 'none',
       }}>
-        <div>TAP → MENU</div>
-        <div>DRAG → MOVE / PAN</div>
-        <div>SCROLL → ZOOM</div>
+        <div>TAP → 選択 / ハンドル表示</div>
+        <div>DBL-TAP → メニュー</div>
+        <div>HANDLE DRAG → 接続</div>
+        <div>EDGE TAP → 削除</div>
+        <div>DRAG → 移動 / パン</div>
       </div>
 
       {/* Mode flash */}
@@ -546,13 +558,13 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Bottom Sheet */}
-      {selected && !noteTarget && !editTextTarget && (
+      {/* Bottom Sheet - ダブルタップで開く */}
+      {selected && sheetOpen && !noteTarget && !editTextTarget && (
         <BottomSheet
           node={selectedNodeObj} theme={theme} aiOn={aiOn}
           isLoading={provokeLoading} isDualLoading={dualLoading}
           childCount={getChildCount(selected)}
-          onClose={() => setSelected(null)}
+          onClose={() => { setSheetOpen(false); setSelected(null) }}
           onProvoke={provoke} onDualProvoke={dualProvoke}
           onDelete={deleteNode} onToggleChildren={toggleChildren}
           onToggleProvoke={toggleProvoke}
