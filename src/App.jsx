@@ -73,6 +73,32 @@ export default function App() {
   const pan = useRef({ active: false, sx: 0, sy: 0, ox: 0, oy: 0 })
   const autoSaveTimer = useRef(null)
 
+  // ── Zoom fit ──
+  const zoomFit = useCallback((targetNodes) => {
+    const ns = targetNodes || nodes
+    if (!ns.length || !canvasRef.current) return
+    const pad = 100
+    const minX = Math.min(...ns.map(n => n.x)) - pad
+    const maxX = Math.max(...ns.map(n => n.x)) + pad
+    const minY = Math.min(...ns.map(n => n.y)) - pad
+    const maxY = Math.max(...ns.map(n => n.y)) + pad
+    const cw = canvasRef.current.offsetWidth
+    const ch = canvasRef.current.offsetHeight
+    const scaleX = cw / (maxX - minX || 1)
+    const scaleY = ch / (maxY - minY || 1)
+    const scale = Math.min(scaleX, scaleY, 1.2)
+    setVp({
+      scale,
+      x: cw / 2 - ((minX + maxX) / 2) * scale,
+      y: ch / 2 - ((minY + maxY) / 2) * scale,
+    })
+  }, [nodes])
+
+  // Auto fit on first mount
+  useEffect(() => {
+    setTimeout(() => zoomFit(), 100)
+  }, []) // eslint-disable-line
+
   const theme = mode === 'business' ? BUSINESS_THEME : PHILOSOPHY_THEME
   const cx = window.innerWidth / 2
   const cy = window.innerHeight / 2
@@ -484,10 +510,13 @@ export default function App() {
 
   // ── Map management ──
   const handleLoadMap = (data) => {
-    setNodes(data.nodes || INITIAL_NODES)
-    setEdges(data.edges || INITIAL_EDGES)
+    const ns = data.nodes || INITIAL_NODES
+    const es = data.edges || INITIAL_EDGES
+    setNodes(ns)
+    setEdges(es)
     if (data.name) setMapName(data.name)
     setSelected(null)
+    setTimeout(() => zoomFit(ns), 80)
   }
 
   const handleNewMap = () => {
@@ -637,12 +666,21 @@ export default function App() {
 
       {/* ── Bottom toolbar ── */}
       <div style={{
-        position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', alignItems: 'center', gap: 8,
-        background: mode === 'business' ? 'rgba(4,10,24,0.9)' : 'rgba(16,13,8,0.92)',
-        border: `1px solid ${theme.nodeBorder}`, borderRadius: 16, padding: '8px 12px',
-        backdropFilter: 'blur(16px)', boxShadow: theme.shadow,
+        position: 'absolute', bottom: 8, left: 0, right: 0,
+        display: 'flex', justifyContent: 'center',
+        padding: '0 12px',
+        pointerEvents: 'none',
       }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: mode === 'business' ? 'rgba(4,10,24,0.92)' : 'rgba(16,13,8,0.94)',
+          border: `1px solid ${theme.nodeBorder}`, borderRadius: 14, padding: '7px 10px',
+          backdropFilter: 'blur(16px)', boxShadow: theme.shadow,
+          overflowX: 'auto', maxWidth: '100%',
+          pointerEvents: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          scrollbarWidth: 'none',
+        }}>
         <ToolbarBtn onClick={addNode} theme={theme} title="ノードを追加">
           <Plus size={14} /><span>ADD</span>
         </ToolbarBtn>
@@ -669,7 +707,7 @@ export default function App() {
           })}
         </div>
         <div style={{ width: 1, height: 20, background: theme.nodeBorder }} />
-        <ToolbarBtn onClick={() => setVp({ x: 0, y: 0, scale: 1 })} theme={theme} title="ビューをリセット">
+        <ToolbarBtn onClick={() => zoomFit()} theme={theme} title="ビューをフィット">
           <LayoutGrid size={14} />
         </ToolbarBtn>
         <div style={{ width: 1, height: 20, background: theme.nodeBorder }} />
@@ -681,12 +719,13 @@ export default function App() {
         }} theme={theme} title="3Dで見る">
           <span>◈ 3D</span>
         </ToolbarBtn>
+        </div>
       </div>
 
       {/* Auto save indicator */}
       {autoSaveFlash && (
         <div style={{
-          position: 'fixed', bottom: 80, right: 16,
+          position: 'fixed', bottom: 60, right: 16,
           fontSize: 10, color: theme.nodeAccent, fontFamily: 'monospace',
           opacity: 0, animation: 'fadeout 1s ease forwards',
           pointerEvents: 'none',
@@ -702,7 +741,7 @@ export default function App() {
       }}>
         <div>TAP → 選択</div>
         <div>● アイコン → メニュー</div>
-        <div>2本指 → パン／ズーム</div>
+        <div>ドラッグ → 移動／パン</div>
         <div>ハンドル → 接続</div>
         <div>エッジタップ → 削除</div>
       </div>
