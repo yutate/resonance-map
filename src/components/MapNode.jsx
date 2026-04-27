@@ -17,9 +17,8 @@ export function MapNode({
   scale, childCount,
 }) {
   const drag = useRef({ active: false, moved: false, sx: 0, sy: 0, ox: 0, oy: 0 })
-  const lastTap = useRef(0)
 
-  // ── Main node pointer: drag = move, single tap = select, double tap = sheet ──
+  // ── Main node pointer: drag = move, tap = select + show handle/icon ──
   const onPointerDown = (e) => {
     e.stopPropagation()
     drag.current = { active: true, moved: false, sx: e.clientX, sy: e.clientY, ox: node.x, oy: node.y }
@@ -34,18 +33,7 @@ export function MapNode({
       drag.current.active = false
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      if (!drag.current.moved) {
-        const now = Date.now()
-        if (now - lastTap.current < 320) {
-          // double tap → open sheet
-          lastTap.current = 0
-          onOpenSheet(node.id)
-        } else {
-          // single tap → select
-          lastTap.current = now
-          onSelect(node.id)
-        }
-      }
+      if (!drag.current.moved) onSelect(node.id)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -197,7 +185,32 @@ export function MapNode({
         )}
       </div>
 
-      {/* ── Drag-connect handle (visible when selected) ── */}
+      {/* ── Menu icon (tap to open sheet) ── */}
+      {isSelected && (
+        <div
+          onPointerDown={e => { e.stopPropagation(); onOpenSheet(node.id) }}
+          style={{
+            position: 'absolute',
+            top: -14, left: '50%', transform: 'translateX(-50%)',
+            width: 26, height: 26, borderRadius: '50%',
+            background: theme.nodeAccent,
+            border: `2px solid ${theme.bg}`,
+            boxShadow: `0 0 10px ${theme.nodeAccent}99`,
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 20,
+            touchAction: 'none',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2.5, alignItems: 'center' }}>
+            {[0,1,2].map(i => (
+              <div key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: theme.bg }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Drag-connect handle ── */}
       {isSelected && (
         <div
           onPointerDown={onHandlePointerDown}

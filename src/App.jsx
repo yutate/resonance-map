@@ -352,14 +352,15 @@ export default function App() {
       }
       setConnectFrom(null)
     } else {
+      // 別ノードをタップしたらシートを閉じる
+      if (id !== selected) setSheetOpen(false)
       setSelected(id)
     }
-  }, [connectFrom, edges])
+  }, [connectFrom, edges, selected])
 
-  // ダブルタップ → ボトムシートを開く
+  // メニューアイコンタップ → ボトムシートを開く
   const handleOpenSheet = useCallback((id) => {
     setSelected(id)
-    // BottomSheetはselectedがある＆sheetOpenがtrueのとき表示
     setSheetOpen(true)
   }, [])
 

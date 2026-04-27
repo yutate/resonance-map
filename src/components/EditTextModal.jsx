@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { X } from 'lucide-react'
 
+const isMobile = () => window.innerWidth <= 600 || 'ontouchstart' in window
+
 export function EditTextModal({ node, theme, onSave, onClose }) {
   const [draft, setDraft] = useState(node?.text || '')
   const inputRef = useRef(null)
@@ -12,6 +14,21 @@ export function EditTextModal({ node, theme, onSave, onClose }) {
   }, [node])
 
   if (!node) return null
+
+  const handleSave = () => { onSave(node.id, draft.trim() || node.text); onClose() }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') { onClose(); return }
+    // PC: Enterのみでは保存しない（テキスト入力中なので）
+    // スマホ: Enterで保存
+    if (e.key === 'Enter') {
+      if (isMobile()) {
+        e.preventDefault()
+        handleSave()
+      }
+      // PCはEnterをそのまま通す（通常の確定動作）
+    }
+  }
 
   return (
     <motion.div
@@ -32,8 +49,15 @@ export function EditTextModal({ node, theme, onSave, onClose }) {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: theme.nodeAccent, fontFamily: 'monospace', letterSpacing: '0.12em' }}>
-            EDIT NODE TEXT
+          <div>
+            <div style={{ fontSize: 11, color: theme.nodeAccent, fontFamily: 'monospace', letterSpacing: '0.12em' }}>
+              EDIT NODE TEXT
+            </div>
+            {!isMobile() && (
+              <div style={{ fontSize: 10, color: theme.nodeText, opacity: 0.35, marginTop: 2 }}>
+                「保存」ボタンで確定 / Escでキャンセル
+              </div>
+            )}
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: theme.nodeText, opacity: 0.4, cursor: 'pointer' }}>
             <X size={18} />
@@ -44,7 +68,7 @@ export function EditTextModal({ node, theme, onSave, onClose }) {
           ref={inputRef}
           value={draft}
           onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { onSave(node.id, draft.trim() || node.text); onClose() } if (e.key === 'Escape') onClose() }}
+          onKeyDown={handleKeyDown}
           style={{
             width: '100%', background: 'rgba(255,255,255,0.07)',
             border: `1px solid ${theme.nodeAccent}55`,
@@ -59,8 +83,7 @@ export function EditTextModal({ node, theme, onSave, onClose }) {
             style={{ background: 'transparent', border: `1px solid ${theme.nodeBorder}`, borderRadius: 10, padding: '10px 16px', color: theme.nodeText, opacity: 0.6, fontSize: 13, cursor: 'pointer' }}>
             キャンセル
           </motion.button>
-          <motion.button whileTap={{ scale: 0.96 }}
-            onClick={() => { onSave(node.id, draft.trim() || node.text); onClose() }}
+          <motion.button whileTap={{ scale: 0.96 }} onClick={handleSave}
             style={{ background: `${theme.nodeAccent}22`, border: `1px solid ${theme.nodeAccent}66`, borderRadius: 10, padding: '10px 20px', color: theme.nodeAccent, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'monospace' }}>
             保存
           </motion.button>
