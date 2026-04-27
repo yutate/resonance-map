@@ -88,22 +88,85 @@ export default function App() {
     return () => clearTimeout(autoSaveTimer.current)
   }, [nodes, edges, mapId, mapName])
 
-  // ── Canvas pan ──
+  // ── Canvas: 1本指タップ（背景）→ 選択解除、2本指→パン＋ズーム ──
   const onCanvasDown = (e) => {
     const el = e.target
     if (!el.dataset.bg && el !== canvasRef.current) return
     if (connectFrom) { setConnectFrom(null); return }
-    setSelected(null)
-    setSheetOpen(false)
-    pan.current = { active: true, sx: e.clientX, sy: e.clientY, ox: vp.x, oy: vp.y }
-    const mv = (ev) => {
-      if (!pan.current.active) return
-      setVp(v => ({ ...v, x: pan.current.ox + (ev.clientX - pan.current.sx), y: pan.current.oy + (ev.clientY - pan.current.sy) }))
+    // マウス（PCの1本指）はそのままパン
+    if (e.pointerType === 'mouse') {
+      setSelected(null)
+      setSheetOpen(false)
+      pan.current = { active: true, sx: e.clientX, sy: e.clientY, ox: vp.x, oy: vp.y }
+      const mv = (ev) => {
+        if (!pan.current.active) return
+        setVp(v => ({ ...v, x: pan.current.ox + (ev.clientX - pan.current.sx), y: pan.current.oy + (ev.clientY - pan.current.sy) }))
+      }
+      const up = () => { pan.current.active = false; window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up) }
+      window.addEventListener('pointermove', mv)
+      window.addEventListener('pointerup', up)
+    } else {
+      // タッチの1本指タップ → 選択解除のみ（パンは touch events で処理）
+      setSelected(null)
+      setSheetOpen(false)
     }
-    const up = () => { pan.current.active = false; window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up) }
-    window.addEventListener('pointermove', mv)
-    window.addEventListener('pointerup', up)
   }
+
+  // ── Touch: 2本指パン＋ピンチズーム ──
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const touches = new Map()
+    let pinchState = null
+    let panState = null
+
+    const onTouchStart = (e) => {
+      for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY })
+      const arr = [...touches.values()]
+
+      if (arr.length === 2) {
+        const [a, b] = arr
+        const dist = Math.hypot(b.x - a.x, b.y - a.y)
+        const mx = (a.x + b.x) / 2
+        const my = (a.y + b.y) / 2 - el.getBoundingClientRect().top
+        pinchState = { dist, scale: vp.scale, mx, my, vpX: vp.x, vpY: vp.y, pmx: mx, pmy: my }
+        panState = null
+      }
+    }
+
+    const onTouchMove = (e) => {
+      e.preventDefault()
+      for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY })
+      const arr = [...touches.values()]
+
+      if (arr.length >= 2 && pinchState) {
+        const [a, b] = arr
+        const newDist = Math.hypot(b.x - a.x, b.y - a.y)
+        const newMx = (a.x + b.x) / 2
+        const newMy = (a.y + b.y) / 2 - el.getBoundingClientRect().top
+        const factor = newDist / pinchState.dist
+        const newScale = Math.min(4, Math.max(0.15, pinchState.scale * factor))
+        const { mx, my, vpX, vpY } = pinchState
+        const newVpX = mx - (mx - vpX) * (newScale / pinchState.scale) + (newMx - mx)
+        const newVpY = my - (my - vpY) * (newScale / pinchState.scale) + (newMy - my)
+        setVp({ scale: newScale, x: newVpX, y: newVpY })
+      }
+    }
+
+    const onTouchEnd = (e) => {
+      for (const t of e.changedTouches) touches.delete(t.identifier)
+      if (touches.size < 2) pinchState = null
+    }
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [vp])
 
   // ── Wheel zoom ──
   useEffect(() => {
@@ -612,11 +675,11 @@ export default function App() {
         fontSize: 10, color: theme.nodeText, opacity: 0.2,
         fontFamily: 'monospace', letterSpacing: '0.08em', lineHeight: 1.9, pointerEvents: 'none',
       }}>
-        <div>TAP → 選択 / ハンドル表示</div>
-        <div>DBL-TAP → メニュー</div>
-        <div>HANDLE DRAG → 接続</div>
-        <div>EDGE TAP → 削除</div>
-        <div>DRAG → 移動 / パン</div>
+        <div>TAP → 選択</div>
+        <div>● アイコン → メニュー</div>
+        <div>2本指 → パン／ズーム</div>
+        <div>ハンドル → 接続</div>
+        <div>エッジタップ → 削除</div>
       </div>
 
       {/* Mode flash */}
