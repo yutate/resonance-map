@@ -6,10 +6,10 @@ import { Edge, DraftEdge } from './components/Edge.jsx'
 import { BottomSheet } from './components/BottomSheet.jsx'
 import { NoteModal } from './components/NoteModal.jsx'
 import { EditTextModal } from './components/EditTextModal.jsx'
-import { ConnectBanner } from './components/ConnectMode.jsx'
+import { AutoExpandOverlay } from './components/AutoExpand.jsx'
 import { ApiKeyBadge, ApiKeyModal } from './components/ApiKeyModal.jsx'
 import { MapManagerBtn, MapManagerModal } from './components/MapManager.jsx'
-import { callClaude, hasApiKey } from './api.js'
+import { callClaude, hasApiKey, autoExpand } from './api.js'
 import { saveMap, loadMap, getLastMapId } from './storage.js'
 import { BUSINESS_THEME, PHILOSOPHY_THEME, INITIAL_NODES, INITIAL_EDGES } from './themes.js'
 
@@ -64,7 +64,9 @@ export default function App() {
   const [provokeLoading, setProvokeLoading] = useState(false)
   const [dualLoading, setDualLoading] = useState(false)
   const [autoSaveFlash, setAutoSaveFlash] = useState(false)
-  const [dragConnect, setDragConnect] = useState(null) // { fromId, wx, wy } world coords
+  const [dragConnect, setDragConnect] = useState(null)
+  const [autoExpanding, setAutoExpanding] = useState(false)
+  const [expandProgress, setExpandProgress] = useState({ done: 0, total: 20, texts: [] }) // { fromId, wx, wy } world coords
   const [, forceUpdate] = useState(0)
   const canvasRef = useRef(null)
   const svgRef = useRef(null)
@@ -213,7 +215,83 @@ export default function App() {
     } finally { setDualLoading(false) }
   }, [nodes])
 
-  // ── Connect (bottomsheet) ──
+  // ── Auto Expand ──
+  const handleAutoExpand = useCallback(async (rootNodeId, rootText) => {
+    setAutoExpanding(true)
+    setExpandProgress({ done: 0, total: 20, texts: [] })
+    try {
+      const items = await autoExpand(rootText, mode)
+
+      // Build id map: text → id
+      const textToId = { root: rootNodeId }
+      const newNodes = []
+      const newEdges = []
+
+      // Layout: depth-1 in ring around root, depth-2 around each depth-1
+      const depth1Items = items.filter(i => i.depth === 1)
+      const depth2Items = items.filter(i => i.depth === 2)
+
+      const ROOT_R = 220
+      const CHILD_R = 160
+
+      // Place depth-1
+      depth1Items.forEach((item, idx) => {
+        const angle = (idx / depth1Items.length) * Math.PI * 2 - Math.PI / 2
+        const rootNode = nodes.find(n => n.id === rootNodeId)
+        const rx = rootNode?.x ?? 0, ry = rootNode?.y ?? 0
+        const id = newId()
+        textToId[item.text] = id
+        newNodes.push({
+          id, text: item.text,
+          x: rx + Math.cos(angle) * ROOT_R,
+          y: ry + Math.sin(angle) * ROOT_R,
+          isRoot: false, provoked: false, provokeData: null,
+          collapsed: false, provokeCollapsed: false, note: '',
+          parentId: rootNodeId,
+          _angle: angle, _rx: rx + Math.cos(angle) * ROOT_R, _ry: ry + Math.sin(angle) * ROOT_R,
+        })
+        newEdges.push({ id: `e${newId()}`, from: rootNodeId, to: id })
+      })
+
+      // Place depth-2
+      depth2Items.forEach((item) => {
+        const parentId = textToId[item.parent]
+        if (!parentId) return
+        const parentNode = newNodes.find(n => n.id === parentId)
+        if (!parentNode) return
+        const siblings = depth2Items.filter(i => i.parent === item.parent)
+        const sibIdx = siblings.indexOf(item)
+        const baseAngle = parentNode._angle ?? 0
+        const spread = Math.PI * 0.7
+        const angle = baseAngle + (sibIdx - (siblings.length - 1) / 2) * (spread / Math.max(siblings.length - 1, 1))
+        const id = newId()
+        textToId[item.text] = id
+        newNodes.push({
+          id, text: item.text,
+          x: parentNode.x + Math.cos(angle) * CHILD_R,
+          y: parentNode.y + Math.sin(angle) * CHILD_R,
+          isRoot: false, provoked: false, provokeData: null,
+          collapsed: false, provokeCollapsed: false, note: '',
+          parentId,
+        })
+        newEdges.push({ id: `e${newId()}`, from: parentId, to: id })
+      })
+
+      // Animate nodes appearing one by one
+      for (let i = 0; i < newNodes.length; i++) {
+        await new Promise(r => setTimeout(r, 60))
+        setNodes(prev => [...prev, newNodes[i]])
+        setEdges(prev => [...prev, newEdges[i]])
+        setExpandProgress(p => ({ ...p, done: i + 1, texts: [...p.texts, newNodes[i].text] }))
+      }
+
+    } catch (err) {
+      console.error('Auto expand failed:', err)
+    } finally {
+      setAutoExpanding(false)
+      setExpandProgress({ done: 0, total: 20, texts: [] })
+    }
+  }, [mode, nodes])
   const startConnect = useCallback((fromId) => {
     setConnectFrom(fromId); setSelected(null)
   }, [])
@@ -563,9 +641,11 @@ export default function App() {
         <BottomSheet
           node={selectedNodeObj} theme={theme} aiOn={aiOn}
           isLoading={provokeLoading} isDualLoading={dualLoading}
+          isAutoExpanding={autoExpanding}
           childCount={getChildCount(selected)}
           onClose={() => { setSheetOpen(false); setSelected(null) }}
           onProvoke={provoke} onDualProvoke={dualProvoke}
+          onAutoExpand={handleAutoExpand}
           onDelete={deleteNode} onToggleChildren={toggleChildren}
           onToggleProvoke={toggleProvoke}
           onEditNote={(id) => setNoteTarget(id)}
@@ -596,6 +676,16 @@ export default function App() {
           nodes={nodes} edges={edges}
           onLoad={handleLoadMap} onNew={handleNewMap}
           onClose={() => setShowMapManager(false)}
+        />
+      )}
+
+      {/* Auto Expand Overlay */}
+      {autoExpanding && (
+        <AutoExpandOverlay
+          theme={theme}
+          progress={expandProgress.done}
+          total={expandProgress.total}
+          nodeTexts={expandProgress.texts}
         />
       )}
 

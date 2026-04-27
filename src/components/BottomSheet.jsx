@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Trash2, StickyNote, ChevronDown, ChevronUp, Link, Palette, Download, Pencil, Zap as ZapDual } from 'lucide-react'
+import { Zap, Trash2, StickyNote, ChevronDown, ChevronUp, Link, Download, Pencil, Zap as ZapDual } from 'lucide-react'
+import { AutoExpandBtn } from './AutoExpand.jsx'
 
 const NODE_COLORS = [
   { key: 'c0', label: 'Purple', hex: '#7c6fff' },
@@ -16,8 +17,8 @@ export function BottomSheet({
   onProvoke, onDualProvoke, onDelete,
   onToggleChildren, onToggleProvoke,
   onEditNote, onEditText, onChangeColor,
-  onStartConnect, onExportPng,
-  childCount, isLoading, isDualLoading,
+  onStartConnect, onExportPng, onAutoExpand,
+  childCount, isLoading, isDualLoading, isAutoExpanding,
 }) {
   const [showColors, setShowColors] = useState(false)
   if (!node) return null
@@ -104,6 +105,13 @@ export function BottomSheet({
 
         {/* Actions grid */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '14px 16px 0' }}>
+
+          {/* Auto Expand - full width */}
+          <AutoExpandBtn
+            onClick={() => { onAutoExpand(node.id, node.text); onClose() }}
+            theme={theme}
+            loading={isAutoExpanding}
+          />
 
           {/* Edit text */}
           <SheetBtn onClick={() => { onEditText(node.id); onClose() }} theme={theme} accent={theme.nodeAccent}
