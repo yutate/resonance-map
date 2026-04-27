@@ -581,7 +581,7 @@ export default function App() {
       }} />
 
       {/* Canvas */}
-      <div ref={canvasRef} onPointerDown={onCanvasDown} style={{ position: 'absolute', inset: 0 }}>
+      <div ref={canvasRef} onPointerDown={onCanvasDown} style={{ position: 'absolute', inset: 0, paddingBottom: 60 }}>
         <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'all' }}>
           <g transform={`translate(${vp.x + cx},${vp.y + cy}) scale(${vp.scale})`}>
             {visibleEdges.map(e => {
@@ -666,14 +666,16 @@ export default function App() {
 
       {/* ── Bottom toolbar ── */}
       <div style={{
-        position: 'absolute', bottom: 8, left: 0, right: 0,
+        position: 'fixed', bottom: 0, left: 0, right: 0,
         display: 'flex', justifyContent: 'center',
-        padding: '0 12px',
+        padding: '8px 12px 12px',
+        background: `linear-gradient(0deg, ${theme.bg} 0%, transparent 100%)`,
         pointerEvents: 'none',
+        zIndex: 100,
       }}>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          background: mode === 'business' ? 'rgba(4,10,24,0.92)' : 'rgba(16,13,8,0.94)',
+          background: mode === 'business' ? 'rgba(4,10,24,0.95)' : 'rgba(16,13,8,0.97)',
           border: `1px solid ${theme.nodeBorder}`, borderRadius: 14, padding: '7px 10px',
           backdropFilter: 'blur(16px)', boxShadow: theme.shadow,
           overflowX: 'auto', maxWidth: '100%',
