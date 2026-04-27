@@ -117,7 +117,12 @@ export default function App() {
   // ── Canvas: 背景タップ→選択解除、背景ドラッグ→パン（PC・タッチ共通）──
   const onCanvasDown = (e) => {
     const el = e.target
-    if (!el.dataset.bg && el !== canvasRef.current) return
+    const isBackground = el.dataset.bg ||
+      el === canvasRef.current ||
+      el === svgRef.current ||
+      el.tagName === 'svg' ||
+      (el.tagName === 'path' && !el.onclick) // エッジのhit areaでない素のpath
+    if (!isBackground) return
     if (connectFrom) { setConnectFrom(null); return }
     setSelected(null)
     setSheetOpen(false)
