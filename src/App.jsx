@@ -88,26 +88,25 @@ export default function App() {
     return () => clearTimeout(autoSaveTimer.current)
   }, [nodes, edges, mapId, mapName])
 
-  // ── Canvas: PCマウスはそのままパン、タッチはtouch eventsで処理 ──
+  // ── Canvas: 背景タップ→選択解除、背景ドラッグ→パン（PC・タッチ共通）──
   const onCanvasDown = (e) => {
     const el = e.target
     if (!el.dataset.bg && el !== canvasRef.current) return
     if (connectFrom) { setConnectFrom(null); return }
-    if (e.pointerType === 'mouse') {
-      setSelected(null)
-      setSheetOpen(false)
-      pan.current = { active: true, sx: e.clientX, sy: e.clientY, ox: vp.x, oy: vp.y }
-      const mv = (ev) => {
-        if (!pan.current.active) return
-        setVp(v => ({ ...v, x: pan.current.ox + (ev.clientX - pan.current.sx), y: pan.current.oy + (ev.clientY - pan.current.sy) }))
-      }
-      const up = () => { pan.current.active = false; window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up) }
-      window.addEventListener('pointermove', mv)
-      window.addEventListener('pointerup', up)
-    } else {
-      setSelected(null)
-      setSheetOpen(false)
+    setSelected(null)
+    setSheetOpen(false)
+    pan.current = { active: true, sx: e.clientX, sy: e.clientY, ox: vp.x, oy: vp.y }
+    const mv = (ev) => {
+      if (!pan.current.active) return
+      setVp(v => ({ ...v, x: pan.current.ox + (ev.clientX - pan.current.sx), y: pan.current.oy + (ev.clientY - pan.current.sy) }))
     }
+    const up = () => {
+      pan.current.active = false
+      window.removeEventListener('pointermove', mv)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', mv)
+    window.addEventListener('pointerup', up)
   }
 
   // ── Touch: 2本指パン＋ピンチズーム（refで最新vpを参照）──
