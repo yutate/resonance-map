@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, StickyNote, ChevronDown } from 'lucide-react'
 
@@ -11,9 +11,14 @@ const COLOR_MAP = {
   c5: { bg: 'rgba(200,180,255,0.12)', border: 'rgba(200,180,255,0.4)', text: '#d8ccff' },
 }
 
-export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, onMove, scale, childCount }) {
+export function MapNode({
+  node, theme, isSelected, isConnectTarget,
+  onSelect, onMove, onDragConnectStart,
+  scale, childCount,
+}) {
   const drag = useRef({ active: false, moved: false, sx: 0, sy: 0, ox: 0, oy: 0 })
 
+  // ── Main node drag / tap ──
   const onPointerDown = (e) => {
     e.stopPropagation()
     drag.current = { active: true, moved: false, sx: e.clientX, sy: e.clientY, ox: node.x, oy: node.y }
@@ -34,9 +39,15 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
     window.addEventListener('pointerup', up)
   }
 
+  // ── Handle drag (connect) ──
+  const onHandlePointerDown = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    onDragConnectStart(node.id, e)
+  }
+
   const ip = node.provoked && node.provokeData
   const colorStyle = node.colorKey ? COLOR_MAP[node.colorKey] : null
-
   const nodeBg = ip ? theme.provoked : (colorStyle ? colorStyle.bg : theme.nodeBase)
   const nodeBorder = isConnectTarget
     ? '#00ff88'
@@ -85,7 +96,6 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
           fontWeight: node.isRoot ? 700 : 500, lineHeight: 1.4, wordBreak: 'break-word',
         }}>{node.text}</div>
 
-        {/* Note indicator */}
         {node.note && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 5 }}>
             <StickyNote size={9} color={theme.nodeAccent} opacity={0.6} />
@@ -93,7 +103,6 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
           </div>
         )}
 
-        {/* Provocation (collapsible) */}
         {ip && (
           <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} style={{ marginTop: 8 }}>
             <div
@@ -120,12 +129,9 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
                   style={{ overflow: 'hidden' }}
                 >
                   <div style={{
-                    padding: '6px 8px',
-                    background: 'rgba(255,255,255,0.03)',
-                    borderRadius: '0 0 6px 6px',
-                    borderLeft: `2px solid ${theme.provokedBorder}`,
+                    padding: '6px 8px', background: 'rgba(255,255,255,0.03)',
+                    borderRadius: '0 0 6px 6px', borderLeft: `2px solid ${theme.provokedBorder}`,
                   }}>
-                    {/* Dual: show both */}
                     {node.provokeData?.mode === 'dual' ? (
                       <>
                         <div style={{ fontSize: 9, color: '#0078ff', fontFamily: 'monospace', fontWeight: 700, marginBottom: 3 }}>BUSINESS</div>
@@ -148,7 +154,6 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
           </motion.div>
         )}
 
-        {/* Collapsed children badge */}
         {node.collapsed && childCount > 0 && (
           <div style={{
             marginTop: 7, display: 'flex', alignItems: 'center', gap: 4,
@@ -161,7 +166,7 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
         )}
 
         {/* Selected dot */}
-        {isSelected && (
+        {isSelected && !isConnectTarget && (
           <div style={{
             position: 'absolute', bottom: -5, left: '50%', transform: 'translateX(-50%)',
             width: 6, height: 6, borderRadius: '50%',
@@ -173,11 +178,33 @@ export function MapNode({ node, theme, isSelected, isConnectTarget, onSelect, on
         {isConnectTarget && (
           <div style={{
             position: 'absolute', inset: -4, borderRadius: node.isRoot ? 20 : 16,
-            border: '2px solid #00ff88', animation: 'pulse-ring 1s ease-in-out infinite',
+            border: '2px solid #00ff88',
+            animation: 'pulse-ring 1s ease-in-out infinite',
             pointerEvents: 'none',
           }} />
         )}
       </div>
+
+      {/* ── Drag-connect handle (visible when selected) ── */}
+      {isSelected && (
+        <div
+          onPointerDown={onHandlePointerDown}
+          style={{
+            position: 'absolute',
+            right: -14, top: '50%', transform: 'translateY(-50%)',
+            width: 20, height: 20, borderRadius: '50%',
+            background: theme.nodeAccent,
+            border: `2px solid ${theme.bg}`,
+            boxShadow: `0 0 8px ${theme.nodeAccent}99`,
+            cursor: 'crosshair',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 20,
+            touchAction: 'none',
+          }}
+        >
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: theme.bg }} />
+        </div>
+      )}
     </motion.div>
   )
 }

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, LayoutGrid, Move, Sparkles, GitBranch } from 'lucide-react'
 import { MapNode } from './components/MapNode.jsx'
-import { Edge } from './components/Edge.jsx'
+import { Edge, DraftEdge } from './components/Edge.jsx'
 import { BottomSheet } from './components/BottomSheet.jsx'
 import { NoteModal } from './components/NoteModal.jsx'
 import { EditTextModal } from './components/EditTextModal.jsx'
@@ -63,6 +63,7 @@ export default function App() {
   const [provokeLoading, setProvokeLoading] = useState(false)
   const [dualLoading, setDualLoading] = useState(false)
   const [autoSaveFlash, setAutoSaveFlash] = useState(false)
+  const [dragConnect, setDragConnect] = useState(null) // { fromId, wx, wy } world coords
   const [, forceUpdate] = useState(0)
   const canvasRef = useRef(null)
   const svgRef = useRef(null)
@@ -210,9 +211,56 @@ export default function App() {
     } finally { setDualLoading(false) }
   }, [nodes])
 
-  // ── Connect ──
+  // ── Connect (bottomsheet) ──
   const startConnect = useCallback((fromId) => {
     setConnectFrom(fromId); setSelected(null)
+  }, [])
+
+  // ── Drag-connect from handle ──
+  const handleDragConnectStart = useCallback((fromId, e) => {
+    e.stopPropagation()
+    const rect = canvasRef.current.getBoundingClientRect()
+    const toWorld = (cx, cy) => ({
+      wx: (cx - rect.left - vp.x) / vp.scale - window.innerWidth / 2 / vp.scale,
+      wy: (cy - rect.top - vp.y) / vp.scale - window.innerHeight / 2 / vp.scale,
+    })
+    const startPt = toWorld(e.clientX, e.clientY)
+    setDragConnect({ fromId, ...startPt })
+    setSelected(fromId)
+
+    const onMove = (ev) => {
+      const pt = toWorld(ev.clientX, ev.clientY)
+      setDragConnect(dc => dc ? { ...dc, ...pt } : null)
+    }
+    const onUp = (ev) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      // Hit-test: find node under pointer
+      const pt = toWorld(ev.clientX, ev.clientY)
+      const HIT = 80
+      const target = nodes.find(n =>
+        n.id !== fromId &&
+        Math.abs(n.x - pt.wx) < HIT &&
+        Math.abs(n.y - pt.wy) < HIT
+      )
+      if (target) {
+        const exists = edges.some(e2 =>
+          (e2.from === fromId && e2.to === target.id) ||
+          (e2.from === target.id && e2.to === fromId)
+        )
+        if (!exists) {
+          setEdges(es => [...es, { id: `e${newId()}`, from: fromId, to: target.id }])
+        }
+      }
+      setDragConnect(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [vp, nodes, edges])
+
+  // ── Delete edge ──
+  const deleteEdge = useCallback((edgeId) => {
+    setEdges(es => es.filter(e => e.id !== edgeId))
   }, [])
 
   const handleNodeSelect = useCallback((id) => {
@@ -337,12 +385,29 @@ export default function App() {
 
       {/* Canvas */}
       <div ref={canvasRef} onPointerDown={onCanvasDown} style={{ position: 'absolute', inset: 0 }}>
-        <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none' }}>
+        <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'all' }}>
           <g transform={`translate(${vp.x + cx},${vp.y + cy}) scale(${vp.scale})`}>
             {visibleEdges.map(e => {
               const f = nodeMap[e.from], t = nodeMap[e.to]
-              return <Edge key={e.id} from={f} to={t} theme={theme} isProvoked={t?.provoked || f?.provoked} />
+              return (
+                <Edge key={e.id} edgeId={e.id} from={f} to={t} theme={theme}
+                  isProvoked={t?.provoked || f?.provoked}
+                  onDelete={deleteEdge}
+                />
+              )
             })}
+            {/* Draft edge while drag-connecting */}
+            {dragConnect && (() => {
+              const fromNode = nodeMap[dragConnect.fromId]
+              if (!fromNode) return null
+              return (
+                <DraftEdge
+                  from={fromNode}
+                  to={{ x: dragConnect.wx, y: dragConnect.wy }}
+                  theme={theme}
+                />
+              )
+            })()}
           </g>
         </svg>
         <div style={{ position: 'absolute', left: vp.x + cx, top: vp.y + cy, transform: `scale(${vp.scale})`, transformOrigin: '0 0' }}>
@@ -351,8 +416,11 @@ export default function App() {
               <MapNode key={n.id} node={n} theme={theme}
                 isSelected={selected === n.id}
                 isConnectTarget={!!connectFrom && connectFrom !== n.id}
-                onSelect={handleNodeSelect} onMove={updatePos}
-                scale={vp.scale} childCount={getChildCount(n.id)}
+                onSelect={handleNodeSelect}
+                onMove={updatePos}
+                onDragConnectStart={handleDragConnectStart}
+                scale={vp.scale}
+                childCount={getChildCount(n.id)}
               />
             ))}
           </AnimatePresence>
