@@ -418,34 +418,52 @@ export default function App() {
     setDragConnect({ fromId, ...startPt })
     setSelected(fromId)
 
-    const onMove = (ev) => {
-      const pt = toWorld(ev.clientX, ev.clientY)
-      setDragConnect(dc => dc ? { ...dc, ...pt } : null)
-    }
-    const onUp = (ev) => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
-      // Hit-test: find node under pointer
-      const pt = toWorld(ev.clientX, ev.clientY)
-      const HIT = 80
-      const target = nodes.find(n =>
-        n.id !== fromId &&
-        Math.abs(n.x - pt.wx) < HIT &&
-        Math.abs(n.y - pt.wy) < HIT
-      )
-      if (target) {
-        const exists = edges.some(e2 =>
-          (e2.from === fromId && e2.to === target.id) ||
-          (e2.from === target.id && e2.to === fromId)
-        )
-        if (!exists) {
-          setEdges(es => [...es, { id: `e${newId()}`, from: fromId, to: target.id }])
-        }
-      }
+      window.removeEventListener('touchcancel', cleanup)
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('visibilitychange', cleanup)
       setDragConnect(null)
     }
+
+    const onMove = (ev) => {
+      const clientX = ev.touches ? ev.touches[0]?.clientX : ev.clientX
+      const clientY = ev.touches ? ev.touches[0]?.clientY : ev.clientY
+      if (clientX == null) return
+      const pt = toWorld(clientX, clientY)
+      setDragConnect(dc => dc ? { ...dc, ...pt } : null)
+    }
+
+    const onUp = (ev) => {
+      const clientX = ev.changedTouches ? ev.changedTouches[0]?.clientX : ev.clientX
+      const clientY = ev.changedTouches ? ev.changedTouches[0]?.clientY : ev.clientY
+      if (clientX != null) {
+        const pt = toWorld(clientX, clientY)
+        const HIT = 80
+        const target = nodes.find(n =>
+          n.id !== fromId &&
+          Math.abs(n.x - pt.wx) < HIT &&
+          Math.abs(n.y - pt.wy) < HIT
+        )
+        if (target) {
+          const exists = edges.some(e2 =>
+            (e2.from === fromId && e2.to === target.id) ||
+            (e2.from === target.id && e2.to === fromId)
+          )
+          if (!exists) setEdges(es => [...es, { id: `e${newId()}`, from: fromId, to: target.id }])
+        }
+      }
+      cleanup()
+    }
+
+    const onKey = (ev) => { if (ev.key === 'Escape') cleanup() }
+
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('touchcancel', cleanup)
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('visibilitychange', cleanup)
   }, [vp, nodes, edges])
 
   // ── Delete edge ──
