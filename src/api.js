@@ -22,10 +22,11 @@ let _state = {
 
 // ── Model definitions ──
 export const MODELS = [
-  { id: 'claude-sonnet', label: 'Claude', sub: 'Sonnet',  badge: null,    provider: 'anthropic' },
-  { id: 'claude-haiku',  label: 'Claude', sub: 'Haiku',   badge: '速い',  provider: 'anthropic' },
-  { id: 'gemini-flash',  label: 'Gemini', sub: '2.5 Flash', badge: null,  provider: 'google' },
-  { id: 'gpt-4o',        label: 'ChatGPT', sub: 'GPT-4o', badge: null,    provider: 'openai' },
+  { id: 'claude-sonnet', label: 'Claude',  sub: 'Sonnet',        badge: null,   provider: 'anthropic' },
+  { id: 'claude-haiku',  label: 'Claude',  sub: 'Haiku',         badge: '速い', provider: 'anthropic' },
+  { id: 'gemini-flash',  label: 'Gemini',  sub: '2.5 Flash',     badge: null,   provider: 'google' },
+  { id: 'gemini-lite',   label: 'Gemini',  sub: '2.5 Flash Lite',badge: '激安', provider: 'google' },
+  { id: 'gpt-4o',        label: 'ChatGPT', sub: 'GPT-4o',        badge: null,   provider: 'openai' },
 ]
 
 export function getState() { return { ..._state } }
@@ -102,9 +103,12 @@ async function callOpenAI(systemPrompt, userPrompt, maxTokens = 256) {
   return data.choices?.[0]?.message?.content || '{}'
 }
 
-async function callGemini(systemPrompt, userPrompt, maxTokens = 256) {
+async function callGemini(modelId, systemPrompt, userPrompt, maxTokens = 256) {
+  const modelStr = modelId === 'gemini-lite'
+    ? 'gemini-2.5-flash-lite-preview-06-17'
+    : 'gemini-2.5-flash-preview-05-20'
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${_state.geminiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelStr}:generateContent?key=${_state.geminiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -125,7 +129,7 @@ async function callModel(modelId, systemPrompt, userPrompt, maxTokens = 256) {
   if (!m) throw new Error('Unknown model')
   if (m.provider === 'anthropic') return callAnthropic(modelId, systemPrompt, userPrompt, maxTokens)
   if (m.provider === 'openai') return callOpenAI(systemPrompt, userPrompt, maxTokens)
-  if (m.provider === 'google') return callGemini(systemPrompt, userPrompt, maxTokens)
+  if (m.provider === 'google') return callGemini(modelId, systemPrompt, userPrompt, maxTokens)
   throw new Error('Unknown provider')
 }
 
