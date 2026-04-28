@@ -56,7 +56,7 @@ function keyForModel(modelId) {
 }
 
 // ── Callers ──
-async function callAnthropic(modelId, systemPrompt, userPrompt) {
+async function callAnthropic(modelId, systemPrompt, userPrompt, maxTokens = 256) {
   const modelStr = modelId === 'claude-haiku'
     ? 'claude-haiku-4-5-20251001'
     : 'claude-sonnet-4-20250514'
@@ -71,7 +71,7 @@ async function callAnthropic(modelId, systemPrompt, userPrompt) {
     },
     body: JSON.stringify({
       model: modelStr,
-      max_tokens: 256,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
     }),
@@ -81,7 +81,7 @@ async function callAnthropic(modelId, systemPrompt, userPrompt) {
   return data.content?.[0]?.text || '{}'
 }
 
-async function callOpenAI(systemPrompt, userPrompt) {
+async function callOpenAI(systemPrompt, userPrompt, maxTokens = 256) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -90,7 +90,7 @@ async function callOpenAI(systemPrompt, userPrompt) {
     },
     body: JSON.stringify({
       model: 'gpt-4o',
-      max_tokens: 256,
+      max_tokens: maxTokens,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -102,7 +102,7 @@ async function callOpenAI(systemPrompt, userPrompt) {
   return data.choices?.[0]?.message?.content || '{}'
 }
 
-async function callGemini(systemPrompt, userPrompt) {
+async function callGemini(systemPrompt, userPrompt, maxTokens = 256) {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${_state.geminiKey}`,
     {
@@ -111,7 +111,7 @@ async function callGemini(systemPrompt, userPrompt) {
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userPrompt }] }],
-        generationConfig: { maxOutputTokens: 256 },
+        generationConfig: { maxOutputTokens: maxTokens },
       }),
     }
   )
@@ -120,12 +120,12 @@ async function callGemini(systemPrompt, userPrompt) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '{}'
 }
 
-async function callModel(modelId, systemPrompt, userPrompt) {
+async function callModel(modelId, systemPrompt, userPrompt, maxTokens = 256) {
   const m = MODELS.find(m => m.id === modelId)
   if (!m) throw new Error('Unknown model')
-  if (m.provider === 'anthropic') return callAnthropic(modelId, systemPrompt, userPrompt)
-  if (m.provider === 'openai') return callOpenAI(systemPrompt, userPrompt)
-  if (m.provider === 'google') return callGemini(systemPrompt, userPrompt)
+  if (m.provider === 'anthropic') return callAnthropic(modelId, systemPrompt, userPrompt, maxTokens)
+  if (m.provider === 'openai') return callOpenAI(systemPrompt, userPrompt, maxTokens)
+  if (m.provider === 'google') return callGemini(systemPrompt, userPrompt, maxTokens)
   throw new Error('Unknown provider')
 }
 
@@ -157,10 +157,10 @@ export function hasApiKey() { return hasAnyKey() }
 
 // ── Auto Expand ──
 const AUTO_EXPAND_PROMPTS = {
-  business: `You are a strategic mind map architect. Given a root theme, generate exactly 20 nodes that form a rich business mind map.
+  business: `You are a strategic mind map architect. Given a root theme, generate exactly 10 nodes that form a rich business mind map.
 Structure:
-- 4-5 depth-1 nodes: major strategic categories (e.g. Market, Operations, People, Finance, Innovation)
-- 15-16 depth-2 nodes: concrete sub-topics under each category
+- 3-4 depth-1 nodes: major strategic categories (e.g. Market, Operations, People, Innovation)
+- 6-7 depth-2 nodes: concrete sub-topics under each category
 
 Rules:
 - depth-1 nodes: parent is "root"
@@ -169,12 +169,12 @@ Rules:
 - Use Japanese if the root theme is in Japanese
 - Respond with ONLY a JSON array, no markdown:
 [{"text":"node label","depth":1,"parent":"root"},{"text":"sub topic","depth":2,"parent":"parent node text"}]
-- Exactly 20 items total`,
+- Exactly 10 items total`,
 
-  philosophy: `You are a philosophical mind map architect. Given a root theme, generate exactly 20 nodes that form a deep philosophical mind map.
+  philosophy: `You are a philosophical mind map architect. Given a root theme, generate exactly 10 nodes that form a deep philosophical mind map.
 Structure:
-- 4-5 depth-1 nodes: major conceptual axes (e.g. Ontology, Ethics, Epistemology, Paradox, Language)
-- 15-16 depth-2 nodes: specific questions or tensions under each axis
+- 3-4 depth-1 nodes: major conceptual axes (e.g. Ontology, Ethics, Epistemology, Paradox)
+- 6-7 depth-2 nodes: specific questions or tensions under each axis
 
 Rules:
 - depth-1 nodes: parent is "root"
@@ -183,7 +183,7 @@ Rules:
 - Use Japanese if the root theme is in Japanese
 - Respond with ONLY a JSON array, no markdown:
 [{"text":"concept","depth":1,"parent":"root"},{"text":"specific question","depth":2,"parent":"parent concept"}]
-- Exactly 20 items total`,
+- Exactly 10 items total`,
 }
 
 export async function autoExpand(rootText, mode) {
@@ -194,26 +194,26 @@ export async function autoExpand(rootText, mode) {
   if (!key) {
     // Stoic fallback: generate dummy nodes
     const categories = mode === 'business'
-      ? ['市場戦略', '組織・人材', 'オペレーション', 'イノベーション', '財務']
-      : ['存在論', '倫理', '認識論', '言語と意味', '時間と変化']
+      ? ['市場戦略', '組織・人材', 'オペレーション', 'イノベーション']
+      : ['存在論', '倫理', '認識論', '言語と意味']
     const nodes = []
     categories.forEach((cat, i) => {
       nodes.push({ text: cat, depth: 1, parent: 'root' })
       const subs = mode === 'business'
-        ? [`${cat}の競合優位`, `${cat}のKPI`, `${cat}のリスク`, `${cat}の未来`]
-        : [`${cat}の核心的問い`, `${cat}の逆説`, `${cat}と自由意志`, `${cat}の限界`]
-      subs.slice(0, i === 0 ? 4 : 3).forEach(s => nodes.push({ text: s, depth: 2, parent: cat }))
+        ? [`${cat}の競合優位`, `${cat}のKPI`, `${cat}のリスク`]
+        : [`${cat}の核心的問い`, `${cat}の逆説`, `${cat}の限界`]
+      subs.slice(0, i < 2 ? 3 : 2).forEach(s => nodes.push({ text: s, depth: 2, parent: cat }))
     })
     await new Promise(r => setTimeout(r, 600))
-    return nodes.slice(0, 20)
+    return nodes.slice(0, 10)
   }
 
   try {
-    const raw = await callModel(_state.model, systemPrompt, userPrompt)
+    const raw = await callModel(_state.model, systemPrompt, userPrompt, 600)
     const clean = raw.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(clean)
     if (!Array.isArray(parsed)) throw new Error('Not array')
-    return parsed.slice(0, 20)
+    return parsed.slice(0, 10)
   } catch (err) {
     console.warn('Auto expand API error:', err)
     throw err

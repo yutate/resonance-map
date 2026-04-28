@@ -328,7 +328,7 @@ export default function App() {
   // ── Auto Expand ──
   const handleAutoExpand = useCallback(async (rootNodeId, rootText) => {
     setAutoExpanding(true)
-    setExpandProgress({ done: 0, total: 20, texts: [] })
+    setExpandProgress({ done: 0, total: 10, texts: [] })
     try {
       const items = await autoExpand(rootText, mode)
 
