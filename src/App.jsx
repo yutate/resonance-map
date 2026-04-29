@@ -66,7 +66,7 @@ export default function App() {
   const [autoSaveFlash, setAutoSaveFlash] = useState(false)
   const [dragConnect, setDragConnect] = useState(null)
   const [autoExpanding, setAutoExpanding] = useState(false)
-  const [expandProgress, setExpandProgress] = useState({ done: 0, total: 20, texts: [] }) // { fromId, wx, wy } world coords
+  const [expandProgress, setExpandProgress] = useState({ done: 0, total: 10, texts: [] })
   const [, forceUpdate] = useState(0)
   const canvasRef = useRef(null)
   const svgRef = useRef(null)
@@ -549,6 +549,10 @@ export default function App() {
     setNodes(INITIAL_NODES)
     setEdges(INITIAL_EDGES)
     setSelected(null)
+    setSheetOpen(false)
+    setDragConnect(null)
+    setConnectFrom(null)
+    setTimeout(() => zoomFit(INITIAL_NODES), 80)
   }
 
   // ── Auto layout ──
@@ -607,7 +611,7 @@ export default function App() {
       <div ref={canvasRef} onPointerDown={onCanvasDown} style={{ position: 'absolute', inset: 0, paddingBottom: 60 }}>
         <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'all' }}>
           <g transform={`translate(${vp.x + cx},${vp.y + cy}) scale(${vp.scale})`}>
-            {visibleEdges.map(e => {
+            {visibleEdges.filter(e => nodeMap[e.from] && nodeMap[e.to]).map(e => {
               const f = nodeMap[e.from], t = nodeMap[e.to]
               return (
                 <Edge key={e.id} edgeId={e.id} from={f} to={t} theme={theme}
